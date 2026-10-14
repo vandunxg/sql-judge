@@ -61,7 +61,7 @@ chmod +x "$TMP/bin/uname" "$TMP/bin/curl"
 printf 'verified appimage\n' > "$TMP/appimage"
 sha=$(sha256sum "$TMP/appimage" | awk '{print $1}')
 cat > "$TMP/release.json" <<EOF
-{"tag_name":"v0.1.0","assets":[{"name":"sql-judge-0.1.0-linux-x86_64.AppImage","browser_download_url":"https://example.invalid/sql-judge-0.1.0-linux-x86_64.AppImage"},{"name":"sql-judge-linux-x86_64.SHA256SUMS","browser_download_url":"https://example.invalid/sql-judge-linux-x86_64.SHA256SUMS"}]}
+{"tag_name": "v0.1.0", "assets": [{"name": "sql-judge-0.1.0-linux-x86_64.AppImage", "browser_download_url": "https://example.invalid/sql-judge-0.1.0-linux-x86_64.AppImage"},{"name": "sql-judge-linux-x86_64.SHA256SUMS", "browser_download_url": "https://example.invalid/sql-judge-linux-x86_64.SHA256SUMS"}]}
 EOF
 printf '%s  sql-judge-0.1.0-linux-x86_64.AppImage\n' "$sha" > "$TMP/checksums"
 if ! HOME="$TMP/home" FIXTURE_ROOT="$TMP" PATH="$TMP/bin:$PATH" bash "$INSTALLER" --user >"$TMP/install.out" 2>&1; then

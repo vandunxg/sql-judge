@@ -50,7 +50,7 @@ end labelOf
 
 on waitFor(appWindow, classNames, label, timeoutSeconds)
 	repeat timeoutSeconds times
-		tell application "System Events" to set elements to entire contents of appWindow
+		set elements to my allElements(appWindow)
 		repeat with element in elements
 			tell application "System Events" to set className to (class of element) as text
 			if classNames contains className and my labelOf(element) is label then
@@ -68,7 +68,7 @@ on waitFor(appWindow, classNames, label, timeoutSeconds)
 end waitFor
 
 on installOutcome(appWindow)
-	tell application "System Events" to set elements to entire contents of appWindow
+	set elements to my allElements(appWindow)
 	repeat with element in elements
 		set label to my labelOf(element)
 		if label ends with " is installed" or label ends with " is already installed" then return "installed:" & label
@@ -79,10 +79,23 @@ end installOutcome
 
 on visibleText(appWindow)
 	set collected to ""
-	tell application "System Events" to set elements to entire contents of appWindow
+	set elements to my allElements(appWindow)
 	repeat with element in elements
 		set label to my labelOf(element)
 		if label is not "" then set collected to collected & label & linefeed
 	end repeat
 	return collected
 end visibleText
+
+-- The Accessibility tree can be briefly unavailable (-10000) while WebKit rebuilds it.
+on allElements(appWindow)
+	repeat 10 times
+		try
+			with timeout of 60 seconds
+				tell application "System Events" to return entire contents of appWindow
+			end timeout
+		end try
+		delay 1
+	end repeat
+	return {}
+end allElements

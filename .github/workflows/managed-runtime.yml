@@ -213,6 +213,8 @@ jobs:
           if (-not (Test-Path $database)) { throw "The app did not create its database." }
           if ($process.HasExited) { throw "The app exited with code $($process.ExitCode)." }
           Stop-Process -Id $process.Id -Force
+          # Leftover WebView2 processes keep the user data folder and break the next session.
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force
           "SQL_JUDGE_APP=$($app.FullName)" >> $env:GITHUB_ENV
 
       - name: Import a pack through the installed app UI (Windows)

@@ -6,11 +6,13 @@ import App from "./App.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { ExternalLinkGuard } from "./components/external-link-guard.tsx"
 import { DebugPanel } from "./components/debug-panel.tsx"
+import { Toaster } from "@/components/ui/sonner"
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
       <ExternalLinkGuard />
+      <Toaster />
       {import.meta.env.DEV ? <DebugPanel /> : null}
       <main data-ui-scroll-container>
         <App />

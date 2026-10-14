@@ -1,4 +1,4 @@
-import { LockKeyhole } from "lucide-react"
+import { Database, LockKeyhole } from "lucide-react"
 import type { ConnectionProfileSummary } from "@/lib/judge-api"
 
 import type { ProfileCheck } from "./connections-check"
@@ -44,9 +44,9 @@ export function ConnectionsProfileList({
           read-only.
         </p>
       ) : (
-        <ul className={`${surfaceCardClass} flex flex-col gap-0.5 p-1.5`}>
+        <ul className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
           {profiles.map((profile) => (
-            <li key={profile.profileId}>
+            <li key={profile.profileId} className="min-w-0">
               <ProfileRow
                 profile={profile}
                 check={checks[profile.profileId]}
@@ -84,32 +84,42 @@ function ProfileRow({
       type="button"
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
-      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 aria-[current=true]:bg-muted"
+      className="group flex min-h-[190px] w-full min-w-0 flex-col items-start gap-4 overflow-hidden rounded-xl border border-border bg-card p-4 text-left text-sm shadow-[0_1px_2px_rgba(16,16,24,0.05)] transition-colors outline-none hover:border-ring/50 hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50 aria-[current=true]:border-ring aria-[current=true]:bg-muted/50 dark:shadow-[0_1px_2px_rgba(0,0,0,0.5)]"
     >
-      <EngineChip engine={profile.engine} />
-      <span className="flex min-w-0 flex-1 flex-col leading-[1.35]">
-        <span className="truncate font-medium">{profile.displayName}</span>
-        {check && !check.ok ? (
-          <span className="truncate text-[12.5px] text-err">
-            {check.message}
+      <span className="flex w-full items-start justify-between gap-3">
+        <EngineChip engine={profile.engine} />
+        {check ? (
+          <span
+            role="img"
+            aria-label={check.ok ? "Read-only verified" : "Test failed"}
+            className={`shrink-0 text-xs font-medium ${check.ok ? "text-ok" : "text-err"}`}
+          >
+            {check.ok ? "Verified" : "Test failed"}
           </span>
         ) : (
-          <span className="truncate text-[12.5px] text-muted-foreground">
-            {profile.host}:{profile.port}
-          </span>
+          <span className="text-xs text-muted-foreground">Not tested</span>
         )}
       </span>
-      {check ? (
-        <span
-          role="img"
-          aria-label={check.ok ? "Read-only verified" : "Test failed"}
-          className={`size-2 shrink-0 rounded-full ${check.ok ? "bg-ok" : "bg-err"}`}
-        />
-      ) : (
-        <span className="shrink-0 text-xs text-muted-foreground">
-          Not tested
+      <span className="flex w-full min-w-0 flex-1 flex-col gap-1 leading-[1.35]">
+        <span className="line-clamp-2 min-w-0 text-[15px] font-semibold break-words">
+          {profile.displayName}
         </span>
-      )}
+        <span className="flex max-w-full min-w-0 items-center gap-1.5 truncate text-[12.5px] text-muted-foreground">
+          <Database className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">{profile.database}</span>
+        </span>
+        <span className="max-w-full truncate font-mono text-[12px] text-muted-foreground">
+          {profile.host}:{profile.port}
+        </span>
+        {check && !check.ok ? (
+          <span className="max-w-full truncate text-[12.5px] text-err">
+            {check.message}
+          </span>
+        ) : null}
+      </span>
+      <span className="max-w-full truncate text-xs font-medium text-muted-foreground transition-colors group-hover:text-foreground">
+        View connection details →
+      </span>
     </button>
   )
 }

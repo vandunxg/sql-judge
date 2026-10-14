@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { Upload } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,9 +15,27 @@ type PacksImportZoneProps = {
   onReview: (path: string) => void
 }
 
-export function PacksImportZone({ disabled, desktopAvailable, error, onPick, onReview }: PacksImportZoneProps) {
+export function PacksImportZone({
+  disabled,
+  desktopAvailable,
+  error,
+  onPick,
+  onReview,
+}: PacksImportZoneProps) {
   const [path, setPath] = useState("")
   const [pathError, setPathError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (error) {
+      toast.error(error)
+    }
+  }, [error])
+
+  useEffect(() => {
+    if (!desktopAvailable) {
+      toast.info("Pack import is available from the SQL Judge desktop app.")
+    }
+  }, [desktopAvailable])
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -41,23 +60,39 @@ export function PacksImportZone({ disabled, desktopAvailable, error, onPick, onR
         </div>
         <div className="flex flex-[1_1_280px] flex-col gap-0.5">
           <h2 id="pack-import-h" className="font-medium">
-            Import a <span className="font-mono text-[13px]">.sqljudge.zip</span> archive or a pack folder
+            Import a{" "}
+            <span className="font-mono text-[13px]">.sqljudge.zip</span> archive
+            or a pack folder
           </h2>
           <p className="text-[13px] text-muted-foreground">
-            You'll review the checks before anything is installed. Nothing is published unless every check passes.
+            You'll review the checks before anything is installed. Nothing is
+            published unless every check passes.
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" className={packsOutlineButtonClass} disabled={disabled} onClick={() => onPick("archive")}>
+          <Button
+            variant="outline"
+            className={packsOutlineButtonClass}
+            disabled={disabled}
+            onClick={() => onPick("archive")}
+          >
             Choose archive
           </Button>
-          <Button variant="ghost" disabled={disabled} onClick={() => onPick("directory")}>
+          <Button
+            variant="ghost"
+            disabled={disabled}
+            onClick={() => onPick("directory")}
+          >
             Choose folder
           </Button>
         </div>
       </div>
 
-      <form className="flex flex-col gap-2 sm:flex-row" onSubmit={submit} noValidate>
+      <form
+        className="flex flex-col gap-2 sm:flex-row"
+        onSubmit={submit}
+        noValidate
+      >
         <Input
           aria-label="Local pack path"
           aria-invalid={pathError ? true : undefined}
@@ -67,19 +102,19 @@ export function PacksImportZone({ disabled, desktopAvailable, error, onPick, onR
           className="h-9 bg-card font-mono text-[13px]"
           disabled={disabled}
         />
-        <Button type="submit" variant="outline" className={packsOutlineButtonClass} disabled={disabled}>
+        <Button
+          type="submit"
+          variant="outline"
+          className={packsOutlineButtonClass}
+          disabled={disabled}
+        >
           Review pack
         </Button>
       </form>
 
-      {!desktopAvailable ? (
-        <p className="rounded-lg bg-warn-bg p-3 text-sm text-warn" role="status">
-          Pack import is available from the SQL Judge desktop app. Browser preview is read-only.
-        </p>
-      ) : null}
-      {message ? (
+      {message && pathError ? (
         <p className="text-sm text-err" role="alert">
-          {message}
+          {pathError}
         </p>
       ) : null}
     </section>

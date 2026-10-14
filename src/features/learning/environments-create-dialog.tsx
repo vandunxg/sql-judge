@@ -149,7 +149,7 @@ export function EnvironmentCreateDialog({
                 }
               </SelectValue>
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent align="start" alignItemWithTrigger={false}>
               {packs.map((candidate) => (
                 <SelectItem key={packKey(candidate)} value={packKey(candidate)}>
                   {candidate.title} {candidate.version}
@@ -185,7 +185,7 @@ export function EnvironmentCreateDialog({
                 }}
               </SelectValue>
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent align="start" alignItemWithTrigger={false}>
               {eligibleProfiles.map((profile) => (
                 <SelectItem key={profile.profileId} value={profile.profileId}>
                   {profile.displayName} · {profile.database}

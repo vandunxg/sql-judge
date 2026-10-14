@@ -8,15 +8,41 @@ export type RuntimeIndicator = {
 
 // undefined = still loading; null = the status call failed or no native runtime exists.
 export function runtimeIndicator(
-  status: ManagedRuntimeStatus | null | undefined
+  status: ManagedRuntimeStatus | null | undefined,
+  activeProfileName?: string
 ): RuntimeIndicator {
+  const profileLabel = activeProfileName?.trim()
   if (status === undefined) {
-    return { label: "Checking runtime", detail: "PostgreSQL · local socket", tone: "muted" }
+    return {
+      label: profileLabel ?? "Checking runtime",
+      detail: profileLabel
+        ? "Checking runtime · PostgreSQL"
+        : "PostgreSQL · local socket",
+      tone: "muted",
+    }
   }
   if (status === null) {
-    return { label: "Runtime unavailable", detail: "Desktop runtime not connected", tone: "err" }
+    return {
+      label: profileLabel ?? "Runtime unavailable",
+      detail: profileLabel
+        ? "Runtime unavailable · Desktop runtime not connected"
+        : "Desktop runtime not connected",
+      tone: "err",
+    }
   }
   return status.available && status.state === "running"
-    ? { label: "Runtime ready", detail: "PostgreSQL · local socket", tone: "ok" }
-    : { label: "Runtime stopped", detail: "Start it from Environments", tone: "err" }
+    ? {
+        label: profileLabel ?? "Runtime ready",
+        detail: profileLabel
+          ? "Runtime ready · PostgreSQL"
+          : "PostgreSQL · local socket",
+        tone: "ok",
+      }
+    : {
+        label: profileLabel ?? "Runtime stopped",
+        detail: profileLabel
+          ? "Runtime stopped · Start it from Environments"
+          : "Start it from Environments",
+        tone: "err",
+      }
 }

@@ -20,6 +20,10 @@ import {
   uniqueNamespace,
 } from "./environments-model"
 import { learningLoadPhase } from "./load-state"
+import {
+  getSelectedEnvironmentProfileId,
+  setSelectedEnvironmentProfileId,
+} from "./environment-selection"
 
 export type EnvironmentMessage = { text: string; alert: boolean }
 
@@ -27,7 +31,7 @@ export function useEnvironments() {
   const data = useEnvironmentData()
   const { environments, setBusy } = data
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
-    null
+    getSelectedEnvironmentProfileId()
   )
   const [message, setMessage] = useState<EnvironmentMessage | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
@@ -52,6 +56,7 @@ export function useEnvironments() {
   }
 
   async function selectProfile(profileId: string | null) {
+    setSelectedEnvironmentProfileId(profileId)
     setSelectedProfileId(profileId)
     setMessage(null)
     if (!(await data.refresh(profileId))) {

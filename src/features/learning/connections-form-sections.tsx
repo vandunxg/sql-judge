@@ -199,7 +199,7 @@ export function SecuritySection({ draft, onChange }: SectionProps) {
             <SelectTrigger id="tls-mode" className="h-9 w-full bg-card">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent align="start" alignItemWithTrigger={false}>
               {supportedTlsModes(draft.engine).map((mode) => (
                 <SelectItem key={mode} value={mode}>
                   {tlsModeLabel(mode)}

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react"
 import { Plus } from "lucide-react"
+import { toast } from "sonner"
 
 import { AccessibleModal } from "@/components/ui/accessible-modal"
 import { Button } from "@/components/ui/button"
@@ -28,9 +29,9 @@ export function ConnectionsScreen() {
   const { checks, testingId, test, forget } = useProfileChecks()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const [draft, setDraft] = useState(EMPTY_DRAFT)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [pendingDeletion, setPendingDeletion] =
     useState<ConnectionProfileSummary | null>(null)
   const deleteOpenerRef = useRef<HTMLElement | null>(null)
@@ -46,7 +47,6 @@ export function ConnectionsScreen() {
   function select(profile: ConnectionProfileSummary | null) {
     setSelectedId(profile?.profileId ?? null)
     setDraft(profile ? draftFromProfile(profile) : EMPTY_DRAFT)
-    setError(null)
   }
 
   function startCreate() {
@@ -54,19 +54,61 @@ export function ConnectionsScreen() {
     setCreateOpen(true)
   }
 
+  function openProfile(profile: ConnectionProfileSummary) {
+    select(profile)
+    setProfileOpen(true)
+  }
+
+  function connectionChanged(profile: ConnectionProfileSummary | undefined) {
+    if (!profile) {
+      return true
+    }
+    return (
+      draft.profileId !== profile.profileId ||
+      draft.engine !== profile.engine ||
+      draft.host !== profile.host ||
+      draft.port !== profile.port ||
+      draft.database !== profile.database ||
+      draft.username !== profile.username ||
+      draft.tlsMode !== profile.tlsMode ||
+      Boolean(draft.secret?.trim())
+    )
+  }
+
   async function save() {
     setBusy(true)
-    setError(null)
     try {
       const result = await saveConnectionProfile(saveRequestFromDraft(draft))
       profilesState.upsert(result)
-      forget(result.profileId)
+      if (connectionChanged(saved)) {
+        forget(result.profileId)
+      }
       setCreateOpen(false)
+      setProfileOpen(false)
       select(result)
     } catch (reason) {
-      setError(readConnectionProfileError(reason))
+      toast.error(readConnectionProfileError(reason))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function testProfile(profile: ConnectionProfileSummary) {
+    const toastId = toast.loading(
+      "Testing the connection and verifying read-only access..."
+    )
+    const check = await test(profile)
+    if (!check) {
+      toast.dismiss(toastId)
+      return
+    }
+    if (check.ok) {
+      toast.success(
+        `Connected in ${check.elapsedMs} ms · read-only session confirmed`,
+        { id: toastId }
+      )
+    } else {
+      toast.error(check.message, { id: toastId })
     }
   }
 
@@ -74,18 +116,21 @@ export function ConnectionsScreen() {
     profile: ConnectionProfileSummary
   ): Promise<string | null> {
     setBusy(true)
-    setError(null)
     try {
       await deleteConnectionProfile(profile.profileId)
       profilesState.remove(profile.profileId)
       forget(profile.profileId)
       select(null)
       setPendingDeletion(null)
+      setProfileOpen(false)
       return null
     } catch (reason) {
-      return reason instanceof Error
-        ? reason.message
-        : "Profile could not be deleted."
+      toast.error(
+        reason instanceof Error
+          ? reason.message
+          : "Profile could not be deleted."
+      )
+      return null
     } finally {
       setBusy(false)
     }
@@ -121,52 +166,46 @@ export function ConnectionsScreen() {
             error={profilesState.error}
             selectedId={selectedId}
             checks={checks}
-            onSelect={select}
+            onSelect={openProfile}
             onRetry={() => {
               select(null)
               profilesState.retry()
             }}
           />
-          {saved ? (
-            <ConnectionsProfileForm
-              draft={draft}
-              saved={saved}
-              check={checks[saved.profileId]}
-              testing={testingId === saved.profileId}
-              desktopAvailable={desktopAvailable}
-              disabled={editorDisabled}
-              error={error}
-              onChange={setDraft}
-              onSave={() => void save()}
-              onDelete={() => setPendingDeletion(saved)}
-              onTest={() => void test(saved)}
-            />
-          ) : null}
         </div>
       </div>
       <AccessibleModal
-        open={createOpen}
-        title="New connection profile"
-        description="Add a read-only connection profile for browsing your database."
+        open={createOpen || profileOpen}
+        title={saved ? saved.displayName : "New connection profile"}
+        description={
+          saved
+            ? "Review or update this read-only connection profile."
+            : "Add a read-only connection profile for browsing your database."
+        }
         busy={busy}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={() => {
+          setCreateOpen(false)
+          setProfileOpen(false)
+        }}
         role="dialog"
         headerClassName="border-b border-border px-6 py-5"
+        showCloseButton
+        closeLabel="Close connection profile"
         className="max-h-[calc(100vh-2rem)] max-w-3xl overflow-y-auto border-border bg-card p-0"
       >
         <ConnectionsProfileForm
           draft={draft}
-          saved={undefined}
-          check={undefined}
-          testing={false}
-          desktopAvailable={desktopAvailable}
+          saved={saved}
+          testing={saved !== undefined && testingId === saved.profileId}
           disabled={editorDisabled}
-          error={error}
           onChange={setDraft}
           onSave={() => void save()}
-          onDelete={() => undefined}
-          onTest={() => undefined}
-          onCancel={() => setCreateOpen(false)}
+          onDelete={() => {
+            if (saved) {
+              setPendingDeletion(saved)
+            }
+          }}
+          onTest={() => saved && void testProfile(saved)}
           modal
         />
       </AccessibleModal>

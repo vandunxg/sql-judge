@@ -53,3 +53,16 @@ primary write-protection boundary.
   typed error mapping for auth, TLS, offline, policy, timeout, and limits.
 - SQL Server remains a distinct adapter in T21; no PostgreSQL assumptions are
   exported as a generic database provider.
+
+## Amendment (2026-10-14): TLS fallback and default TEMPORARY privilege
+
+- Every TLS mode sets the driver's `sslmode=require`. The driver default,
+  `prefer`, silently continued in plaintext when a server declined TLS, so
+  `verify_full` could connect unencrypted. A server without TLS now fails with
+  `tls_failed`. `disable` is still rejected for external profiles.
+- The read-only check no longer treats the database `TEMPORARY` privilege as a
+  write capability. PostgreSQL grants it to `PUBLIC` by default, so every
+  SELECT-only role failed the connection test. Temporary objects are
+  session-local and cannot be created inside the Explorer's `READ ONLY`
+  transactions. Database `CREATE` and every other write privilege still fail
+  the check.

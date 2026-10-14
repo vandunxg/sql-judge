@@ -8,6 +8,7 @@ const SAFE_PACK_ERRORS = new Set([
   "Managed PostgreSQL runtime is unavailable.",
   "Managed PostgreSQL runtime ownership could not be verified.",
   "Pack runtime validation or publication failed.",
+  "Another pack is already installed with this ID and version.",
 ])
 
 const FALLBACK_PACK_ERROR =
@@ -31,6 +32,27 @@ export function readPackImportError(reason: unknown): string {
     return message
   }
   return SAFE_PACK_ERRORS.has(message) ? message : FALLBACK_PACK_ERROR
+}
+
+const SAFE_PACK_DELETE_ERRORS = new Set([
+  "Deleting a pack requires explicit confirmation.",
+  "Managed environment state is busy.",
+  "The exact pack is not installed.",
+  "Installed pack catalog could not be read.",
+  "A pack environment is busy or needs recovery; the pack was kept.",
+  "A pack environment could not be deleted; the pack was kept.",
+  "The pack could not be removed from the catalog.",
+  "Managed PostgreSQL runtime is unavailable.",
+])
+
+export function readPackDeleteError(reason: unknown): string {
+  const message = nativeMessage(reason)
+  if (message === RUNTIME_START_ERROR) {
+    return RUNTIME_START_GUIDANCE
+  }
+  return SAFE_PACK_DELETE_ERRORS.has(message)
+    ? message
+    : "The pack was not deleted. Try again."
 }
 
 function nativeMessage(reason: unknown): string {

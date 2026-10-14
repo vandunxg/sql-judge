@@ -26,7 +26,7 @@
 - Create: `src/features/learning/practice-workspace-state.ts`
 - Create: `src/features/learning/practice-workspace-state.test.js`
 
-- [ ] **Step 1: Write failing tests for pack scoping and page boundaries**
+- [x] **Step 1: Write failing tests for pack scoping and page boundaries**
 
 ```js
 import { describe, expect, test } from "bun:test"
@@ -64,13 +64,13 @@ describe("practice workspace state", () => {
 })
 ```
 
-- [ ] **Step 2: Run the new test and verify RED**
+- [x] **Step 2: Run the new test and verify RED**
 
 Run: `bun test src/features/learning/practice-workspace-state.test.js`
 
 Expected: import failure because `practice-workspace-state.ts` does not exist.
 
-- [ ] **Step 3: Implement the pure state module**
+- [x] **Step 3: Implement the pure state module**
 
 ```ts
 export const PROBLEM_PAGE_SIZE = 5
@@ -104,13 +104,13 @@ export function pageForProblem<T extends { id: string }>(
 }
 ```
 
-- [ ] **Step 4: Run the focused state test and verify GREEN**
+- [x] **Step 4: Run the focused state test and verify GREEN**
 
 Run: `bun test src/features/learning/practice-workspace-state.test.js`
 
 Expected: 3 passing tests.
 
-- [ ] **Step 5: Commit the isolated state change**
+- [x] **Step 5: Commit the isolated state change**
 
 ```bash
 git add src/features/learning/practice-workspace-state.ts src/features/learning/practice-workspace-state.test.js
@@ -123,7 +123,7 @@ git commit -m "feat: add pack-scoped practice pagination"
 - Create: `src/features/learning/sql-completions.ts`
 - Create: `src/features/learning/sql-completions.test.js`
 
-- [ ] **Step 1: Write failing completion-data tests**
+- [x] **Step 1: Write failing completion-data tests**
 
 ```js
 import { describe, expect, test } from "bun:test"
@@ -146,13 +146,13 @@ describe("sqlCompletionItems", () => {
 })
 ```
 
-- [ ] **Step 2: Run the new test and verify RED**
+- [x] **Step 2: Run the new test and verify RED**
 
 Run: `bun test src/features/learning/sql-completions.test.js`
 
 Expected: import failure because `sql-completions.ts` does not exist.
 
-- [ ] **Step 3: Implement serializable completion descriptors**
+- [x] **Step 3: Implement serializable completion descriptors**
 
 ```ts
 import type { CatalogTable, ProblemDialect } from "@/lib/judge-api"
@@ -186,13 +186,13 @@ export function sqlCompletionItems(dialect: ProblemDialect, schema: CatalogTable
 }
 ```
 
-- [ ] **Step 4: Run focused completion tests and verify GREEN**
+- [x] **Step 4: Run focused completion tests and verify GREEN**
 
 Run: `bun test src/features/learning/sql-completions.test.js`
 
 Expected: 2 passing tests.
 
-- [ ] **Step 5: Commit the isolated completion-data change**
+- [x] **Step 5: Commit the isolated completion-data change**
 
 ```bash
 git add src/features/learning/sql-completions.ts src/features/learning/sql-completions.test.js
@@ -206,7 +206,7 @@ git commit -m "feat: add offline SQL completion data"
 - Modify: `src/features/learning/catalog.ts:24-40` only if a pack-scoped mapper removes duplication
 - Test: `src/features/learning/practice-workspace-state.test.js`
 
-- [ ] **Step 1: Extend the state test with delayed Stop behavior**
+- [x] **Step 1: Extend the state test with delayed Stop behavior**
 
 ```js
 import { stopVisibleAfter } from "./practice-workspace-state"
@@ -217,13 +217,13 @@ test("shows Stop only after the running grace period", () => {
 })
 ```
 
-- [ ] **Step 2: Run the state test and verify RED**
+- [x] **Step 2: Run the state test and verify RED**
 
 Run: `bun test src/features/learning/practice-workspace-state.test.js`
 
 Expected: missing export `stopVisibleAfter`.
 
-- [ ] **Step 3: Add the pure grace-period helper**
+- [x] **Step 3: Add the pure grace-period helper**
 
 ```ts
 export const STOP_GRACE_PERIOD_MS = 1_500
@@ -233,7 +233,9 @@ export function stopVisibleAfter(elapsedMs: number) {
 }
 ```
 
-- [ ] **Step 4: Refactor `LearningWorkspace` around pack-local view state**
+- [x] **Step 4: Refactor `LearningWorkspace` around pack-local view state**
+
+> Revised 2026-10-14: implemented against the binding Solve design instead of the persistent rail and context-above-editor layout below. See the revised spec Layout section. Pagination, delayed Stop, and completion rules are unchanged.
 
 Implement these exact rules:
 
@@ -266,13 +268,13 @@ When `run` starts, keep the clicked action in place with `LoaderCircle` and an e
 
 In `Editor` `onMount`, call `monaco.languages.registerCompletionItemProvider(language, provider)` using `sqlCompletionItems(selectedProblem.dialect, selectedProblem.schema)`. Convert descriptor kinds to Monaco `CompletionItemKind`, set `range: model.getWordUntilPosition(position)`, and return the registration's disposable from a `useEffect` cleanup so a prior problem's schema is never suggested.
 
-- [ ] **Step 5: Verify the focused UI state tests**
+- [x] **Step 5: Verify the focused UI state tests**
 
 Run: `bun test src/features/learning/practice-workspace-state.test.js src/features/learning/sql-completions.test.js src/features/learning/catalog.test.js src/features/learning/judge-state.test.js`
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Verify type safety and build**
+- [x] **Step 6: Verify type safety and build**
 
 Run: `bun run typecheck && bun run lint && bun run build`
 

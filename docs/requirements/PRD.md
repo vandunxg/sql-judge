@@ -56,7 +56,7 @@ Standalone desktop learning environment for developers studying PostgreSQL / T-S
 | REQ-019 | MUST | Implement the application shell and every screen from the approved visual contract in `docs/design/SQL Judge — UI redesign.html` and its matching artboard. Home is the default route; shell navigation groups are Learn, Library and Data; desktop sidebar is 248px and header is 56px. Preserve keyboard access, dark/light modes through the existing provider, responsive behavior and all safety states. |
 | REQ-020 | SHOULD | Import/export backup of packs, settings (no secrets) and history; collision/version semantics. |
 | REQ-021 | SHOULD | Distinct dialect support and version metadata, `EXPLAIN` for local read-only practice. |
-| REQ-022 | LATER | Scoped external writable sandbox only by explicit advanced opt-in + verification. |
+| REQ-022 | MUST | External PostgreSQL writable sandbox is available only through explicit advanced opt-in, saved-profile capability verification, a generated app-owned schema, durable target binding, ownership-marker verification, displayed impact summary, and explicit confirmation. It must never adopt or alter an existing external schema or database. |
 | REQ-023 | LATER | Bundled managed PostgreSQL per OS release asset with startup/shutdown/update mechanics. |
 | REQ-024 | LATER | SQL Server judge for disposable managed SQL Server test environments. |
 | REQ-025 | MUST | UI implementation must reproduce the matching artboard's declared tokens, layout, typography, spacing, radii, borders, shadows, interaction states and empty/loading/error states through the existing React component system. Exported HTML and vendor runtime are reference material only. |

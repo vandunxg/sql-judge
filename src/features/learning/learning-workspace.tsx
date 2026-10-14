@@ -24,6 +24,7 @@ import {
 } from "./judge-state"
 import { learningLoadErrorMessage } from "./load-state"
 import { stopVisibleAfter } from "./practice-workspace-state"
+import { submissionsOnly } from "./problem-progress"
 import { ProblemsList } from "./problems-list"
 import { adjacentProblems, environmentForProblem } from "./solve-state"
 import { SolveView } from "./solve-view"
@@ -132,7 +133,7 @@ export function LearningWorkspace({
   useEffect(() => {
     let active = true
     void listSubmissionHistory()
-      .then((records) => active && setHistory(records))
+      .then((records) => active && setHistory(submissionsOnly(records)))
       .catch(() => active && setHistory([]))
     return () => {
       active = false

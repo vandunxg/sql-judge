@@ -45,6 +45,11 @@ export function relativeTime(at: number, now: number) {
   return months === 1 ? "last month" : `${months} months ago`
 }
 
+// Sample runs share the history table (ADR-024) but never count as submissions.
+export function submissionsOnly<T extends { mode: "run" | "submit" }>(history: T[]) {
+  return history.filter((entry) => entry.mode === "submit")
+}
+
 // Legacy submissions without a problem id cannot be attributed and are skipped.
 export function problemProgress(
   history: HistoryEntry[],

@@ -67,7 +67,7 @@ export type ManagedEnvironmentSummary = {
   packVersion: string
   packDigest: string
   namespace: string
-  mode: "managed" | "external_explorer"
+  mode: "managed" | "external_explorer" | "external_sandbox"
   state:
     | "provisioning"
     | "ready"
@@ -141,6 +141,21 @@ export type CreateManagedEnvironmentRequest = {
   namespace: string
 }
 
+export type ExternalSandboxProbe = {
+  database: string
+  databaseOid: number
+  systemIdentifier: string
+}
+
+export type CreateExternalSandboxRequest = {
+  envId: string
+  profileId: string
+  packId: string
+  packVersion: string
+  packDigest: string
+  confirmed: boolean
+}
+
 export type ManagedPackSummary = {
   packId: string
   version: string
@@ -197,6 +212,12 @@ export type DeleteManagedEnvironmentRequest = {
   confirmed: boolean
 }
 
+export type SubmissionTestSummary = {
+  testId: string
+  verdict: string
+  elapsedMs: number
+}
+
 export type SubmissionHistorySummary = {
   submissionId: string
   packId: string
@@ -207,6 +228,9 @@ export type SubmissionHistorySummary = {
   policyVersion: string
   verdict: string
   createdAt: string
+  /** Records saved before run tracking existed are submissions. */
+  mode: "run" | "submit"
+  tests: SubmissionTestSummary[]
 }
 
 export type PackImportResult = {
@@ -215,6 +239,8 @@ export type PackImportResult = {
   version: string
   digest: string
   message: string
+  /** The pack sandbox Run uses; `pending` means the first Run creates it. */
+  sandbox: "ready" | "pending"
 }
 
 export type BackupSnapshot = {
@@ -239,6 +265,10 @@ export type BackupSnapshot = {
     policyVersion: string
     verdict: string
     createdAt: string
+    /** Omitted for submissions recorded before problem tracking existed. */
+    problemId?: string
+    /** Omitted means "submit"; only sample runs carry it. */
+    mode?: "run"
     tests: Array<{
       testId: string
       verdict: string
@@ -307,6 +337,40 @@ export async function createManagedEnvironment(
 
   return trackedInvoke<ManagedEnvironmentSummary>(
     "create_managed_environment",
+    nativeRequest(request)
+  )
+}
+
+export async function probeExternalSandboxProfile(
+  profileId: string
+): Promise<ExternalSandboxProbe> {
+  if (!isTauri()) {
+    throw new Error(
+      "External sandbox verification is only available in the desktop app."
+    )
+  }
+
+  return trackedInvoke<ExternalSandboxProbe>(
+    "probe_external_sandbox_profile",
+    nativeRequest({ profileId })
+  )
+}
+
+export async function createExternalSandbox(
+  request: CreateExternalSandboxRequest
+): Promise<ManagedEnvironmentSummary> {
+  if (!isTauri()) {
+    throw new Error(
+      "External sandbox creation is only available in the desktop app."
+    )
+  }
+
+  if (!request.confirmed) {
+    throw new Error("Explicit external sandbox confirmation is required.")
+  }
+
+  return trackedInvoke<ManagedEnvironmentSummary>(
+    "create_external_sandbox",
     nativeRequest(request)
   )
 }
@@ -395,6 +459,23 @@ export async function listInstalledPacks(): Promise<InstalledPack[]> {
     return []
   }
   return trackedInvoke<InstalledPack[]>("list_installed_packs")
+}
+
+export type DeletePackRequest = {
+  packId: string
+  version: string
+  digest: string
+  confirmed: boolean
+}
+
+export async function deletePack(request: DeletePackRequest): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("Pack deletion is only available in the desktop app.")
+  }
+  if (!request.confirmed) {
+    throw new Error("Deleting a pack requires explicit confirmation.")
+  }
+  await trackedInvoke<void>("delete_pack", nativeRequest(request))
 }
 
 export async function pickPackSource(

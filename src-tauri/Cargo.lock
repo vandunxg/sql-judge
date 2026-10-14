@@ -1122,6 +1122,7 @@ dependencies = [
 name = "environment-manager"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "thiserror 2.0.21",
 ]
 
@@ -3234,6 +3235,7 @@ checksum = "9a65843dfefbafd3c879c683306959a6de478443ffe9c9adf02f5976432402d7"
 name = "problem-pack"
 version = "0.1.0"
 dependencies = [
+ "app-storage",
  "judge-core",
  "judge-postgres",
  "serde",

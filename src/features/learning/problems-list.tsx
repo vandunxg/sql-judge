@@ -18,6 +18,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { parseHash } from "@/app-route-state"
 import { cn } from "@/lib/utils"
 import type { InstalledPack, SubmissionHistorySummary } from "@/lib/judge-api"
 import { catalogProblemKey, type LearningProblem, type ProblemDifficulty } from "./catalog"
@@ -100,7 +101,8 @@ export function ProblemsList({
 }) {
   const [query, setQuery] = useState("")
   const [topic, setTopic] = useState("all")
-  const [packId, setPackId] = useState("all")
+  // Packs links here as `#problems?pack=<id>` to open the list pre-filtered.
+  const [packId, setPackId] = useState(() => parseHash(window.location.hash).params.get("pack") ?? "all")
   const [difficulty, setDifficulty] = useState<ProblemDifficulty | "all">("all")
   const [status, setStatus] = useState<StatusFilter>("all")
   const [topicsExpanded, setTopicsExpanded] = useState(false)

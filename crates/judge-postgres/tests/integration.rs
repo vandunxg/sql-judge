@@ -1,8 +1,10 @@
 use judge_core::{Column, LogicalType, OutputPolicy, QueryLimits, RowOrder, SqlValue, Verdict};
 use judge_postgres::{
     CancellationToken, ExternalPostgresConfig, ExternalPostgresError, ExternalPostgresExplorer,
-    ExternalTlsMode, JudgeCase, ManagedEnvironment, PostgresSession, QueryExecutionError,
-    judge_submission, judge_submission_with_cancel, judge_submission_with_watchdog,
+    ExternalPostgresSandbox, ExternalSandboxConfig, ExternalTlsMode, JudgeCase, ManagedEnvironment,
+    PostgresSession, QueryExecutionError, judge_submission,
+    judge_submission_in_namespace_with_watchdog_token, judge_submission_with_cancel,
+    judge_submission_with_watchdog,
 };
 use std::io::Write;
 use std::net::TcpListener;
@@ -14,6 +16,7 @@ struct TestServer {
     socket_dir: PathBuf,
     port: u16,
     password: String,
+    provisioner_password: String,
 }
 
 impl TestServer {
@@ -84,9 +87,12 @@ impl TestServer {
         );
 
         let password = format!("sqljudge_test_{}", std::process::id());
+        let provisioner_password = format!("sqljudge_provisioner_{}", std::process::id());
         let setup = format!(
             "CREATE ROLE sqljudge_runner LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;\
+             CREATE ROLE sqljudge_provisioner LOGIN PASSWORD '{provisioner_password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;\
              REVOKE CREATE, TEMPORARY ON DATABASE sqljudge_test FROM PUBLIC;\
+             GRANT CREATE ON DATABASE sqljudge_test TO sqljudge_provisioner;\
              REVOKE CREATE ON SCHEMA public FROM PUBLIC;\
              GRANT USAGE ON SCHEMA public TO sqljudge_runner;\
              CREATE TABLE public.sample (id integer NOT NULL, label text);\
@@ -123,6 +129,7 @@ impl TestServer {
             socket_dir,
             port,
             password,
+            provisioner_password,
         }
     }
 
@@ -140,6 +147,25 @@ impl TestServer {
             self.port,
             std::env::var("USER").expect("USER must identify the local test owner")
         )
+    }
+
+    fn external_sandbox_config(&self, namespace: &str) -> ExternalSandboxConfig {
+        ExternalSandboxConfig::new(
+            ExternalPostgresConfig {
+                host: "127.0.0.1".to_owned(),
+                port: self.port,
+                database: "sqljudge_test".to_owned(),
+                username: "sqljudge_provisioner".to_owned(),
+                password: self.provisioner_password.clone(),
+                tls_mode: ExternalTlsMode::Disable,
+                allow_insecure_local: true,
+            },
+            "profile-test",
+            "environment-test",
+            namespace,
+            "nonce-test",
+        )
+        .expect("valid external sandbox config")
     }
 
     fn run_admin_sql(&self, sql: &str) {
@@ -314,6 +340,223 @@ fn external_connection_rejects_effective_write_capabilities() {
         );
         server.run_admin_sql(revoke);
     }
+}
+
+#[test]
+fn external_connection_with_default_temporary_privilege_is_read_only() {
+    let server = TestServer::start();
+    // PostgreSQL grants TEMPORARY to PUBLIC by default. Temporary objects are session-local
+    // and cannot be created inside the explorer's READ ONLY transactions.
+    server.run_admin_sql("GRANT TEMPORARY ON DATABASE sqljudge_test TO PUBLIC");
+    let mut explorer = ExternalPostgresExplorer::connect(ExternalPostgresConfig {
+        host: "127.0.0.1".to_owned(),
+        port: server.port,
+        database: "sqljudge_test".to_owned(),
+        username: "sqljudge_runner".to_owned(),
+        password: server.password.clone(),
+        tls_mode: ExternalTlsMode::Disable,
+        allow_insecure_local: true,
+    })
+    .expect("connect external explorer");
+
+    assert!(
+        explorer
+            .test_connection()
+            .expect("test external connection")
+            .read_only
+    );
+}
+
+#[test]
+fn external_tls_modes_never_fall_back_to_plaintext() {
+    // The test server runs without TLS, so every TLS mode must refuse to connect.
+    let server = TestServer::start();
+    for tls_mode in [
+        ExternalTlsMode::VerifyFull,
+        ExternalTlsMode::VerifyCa,
+        ExternalTlsMode::Require,
+    ] {
+        let result = ExternalPostgresExplorer::connect(ExternalPostgresConfig {
+            host: "127.0.0.1".to_owned(),
+            port: server.port,
+            database: "sqljudge_test".to_owned(),
+            username: "sqljudge_runner".to_owned(),
+            password: server.password.clone(),
+            tls_mode,
+            allow_insecure_local: false,
+        });
+        assert!(
+            matches!(result, Err(ExternalPostgresError::TlsFailed)),
+            "{tls_mode:?} must not connect without TLS"
+        );
+    }
+}
+
+#[test]
+fn external_sandbox_rejects_a_preexisting_unmarked_schema() {
+    let server = TestServer::start();
+    server.run_admin_sql("CREATE SCHEMA sj_external_unmarked");
+    let config = server.external_sandbox_config("sj_external_unmarked");
+    let mut sandbox = ExternalPostgresSandbox::connect(config).expect("connect provisioner");
+
+    assert_eq!(
+        sandbox.provision(),
+        Err(ExternalPostgresError::OwnershipVerificationFailed)
+    );
+    server.run_admin_sql(
+        "DO $$ BEGIN
+             IF to_regnamespace('sj_external_unmarked') IS NULL
+                OR to_regclass('sj_external_unmarked.__sql_judge_external_sandbox') IS NOT NULL THEN
+               RAISE EXCEPTION 'unmarked schema was modified';
+             END IF;
+           END $$",
+    );
+}
+
+#[test]
+fn external_sandbox_deletes_only_its_marker_verified_schema() {
+    let server = TestServer::start();
+    let config = server.external_sandbox_config("sj_external_owned");
+    let mut sandbox = ExternalPostgresSandbox::connect(config).expect("connect provisioner");
+
+    sandbox.provision().expect("provision owned schema");
+    assert!(sandbox.verify_ownership().expect("verify marker"));
+    sandbox
+        .delete_owned_schema()
+        .expect("delete marker-verified schema");
+    server.run_admin_sql(
+        "DO $$ BEGIN
+             IF to_regnamespace('sj_external_owned') IS NOT NULL THEN
+               RAISE EXCEPTION 'owned schema was not deleted';
+             END IF;
+           END $$",
+    );
+}
+
+fn sandbox_case<'a>(id: &'a str, fixture_sql: &'a str) -> JudgeCase<'a> {
+    JudgeCase {
+        id,
+        schema_sql: "",
+        fixture_sql,
+        reference_sql: "SELECT id FROM values_table ORDER BY id",
+        output: OutputPolicy::new(
+            RowOrder::Ordered,
+            true,
+            true,
+            vec![Column::new("id", LogicalType::Integer)],
+        ),
+        limits: QueryLimits::new(2_000, 100, 64 * 1024),
+    }
+}
+
+#[test]
+fn namespace_judge_loads_each_fixture_in_a_rolled_back_transaction() {
+    let server = TestServer::start();
+    let mut admin =
+        PostgresSession::connect(&server.admin_connection_string()).expect("connect admin");
+    let sandbox = ManagedEnvironment::new(
+        "pack-sandbox",
+        "instance-sandbox",
+        "sj_pack_sandbox",
+        "nonce",
+    )
+    .expect("sandbox identity");
+    admin
+        .provision_managed_namespace_with_schema(
+            &sandbox,
+            "sqljudge_runner",
+            "CREATE TABLE values_table (id integer);
+             CREATE TABLE counters (n integer GENERATED ALWAYS AS IDENTITY);",
+        )
+        .expect("provision sandbox");
+    let cases = [
+        sandbox_case("one", "INSERT INTO values_table VALUES (1);"),
+        sandbox_case("two", "INSERT INTO values_table VALUES (2), (3);"),
+    ];
+    let judge = |admin: &mut PostgresSession, environment: &ManagedEnvironment, sql: &str| {
+        judge_submission_in_namespace_with_watchdog_token(
+            admin,
+            environment,
+            "sqljudge_runner",
+            &cases,
+            sql,
+            &CancellationToken::default(),
+            std::time::Duration::from_secs(5),
+        )
+    };
+
+    let accepted = judge(
+        &mut admin,
+        &sandbox,
+        "SELECT id FROM values_table ORDER BY id",
+    );
+    assert_eq!(accepted.verdict, Verdict::Accepted);
+    assert_eq!(
+        accepted.preview.expect("preview").rows,
+        vec![vec![SqlValue::Signed(1)]],
+        "each fixture only sees its own rows"
+    );
+
+    let only_first = judge(&mut admin, &sandbox, "SELECT 1 AS id");
+    assert_eq!(
+        only_first
+            .tests
+            .iter()
+            .map(|test| test.verdict)
+            .collect::<Vec<_>>(),
+        vec![Verdict::Accepted, Verdict::WrongAnswer]
+    );
+
+    let writes = judge(
+        &mut admin,
+        &sandbox,
+        "SELECT nextval('counters_n_seq')::integer AS id",
+    );
+    assert!(
+        writes
+            .tests
+            .iter()
+            .all(|test| test.verdict == Verdict::PolicyViolation)
+    );
+    let inside = admin
+        .with_namespace_fixture(
+            &sandbox,
+            "sqljudge_runner",
+            "INSERT INTO values_table VALUES (7);",
+            |session| {
+                session.execute(
+                    "SELECT current_setting('transaction_read_only') AS read_only,
+                            (SELECT count(*) FROM values_table) AS loaded",
+                    QueryLimits::new(2_000, 10, 64 * 1024),
+                )
+            },
+        )
+        .expect("run inside the sandbox fixture");
+    assert_eq!(
+        inside.rows,
+        vec![vec![SqlValue::Text("on".to_owned()), SqlValue::Signed(1)]],
+        "queries see the loaded fixture inside a read-only transaction"
+    );
+
+    let remaining = admin
+        .execute(
+            "SELECT count(*) FROM sj_pack_sandbox.values_table",
+            QueryLimits::new(2_000, 10, 64 * 1024),
+        )
+        .expect("inspect sandbox rows");
+    assert_eq!(remaining.rows[0][0], SqlValue::Signed(0));
+
+    let forged = ManagedEnvironment::new(
+        "pack-sandbox",
+        "instance-sandbox",
+        "sj_pack_sandbox",
+        "other-nonce",
+    )
+    .expect("forged identity");
+    assert_eq!(
+        judge(&mut admin, &forged, "SELECT id FROM values_table").verdict,
+        Verdict::JudgeError
+    );
 }
 
 #[test]

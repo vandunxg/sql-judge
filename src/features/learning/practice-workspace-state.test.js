@@ -6,6 +6,7 @@ import {
   paginateProblems,
   problemsForPack,
   stopVisibleAfter,
+  adjacentProblemId,
 } from "./practice-workspace-state"
 
 const problems = Array.from({ length: 12 }, (_, index) => ({
@@ -41,5 +42,29 @@ describe("practice workspace state", () => {
   test("shows Stop only after the running grace period", () => {
     expect(stopVisibleAfter(1_499)).toBe(false)
     expect(stopVisibleAfter(1_500)).toBe(true)
+  })
+})
+
+describe("adjacent problem navigation", () => {
+  const items = [{ id: "a" }, { id: "b" }, { id: "c" }]
+
+  test("moves to the previous and next problem", () => {
+    expect(adjacentProblemId(items, "b", -1)).toBe("a")
+    expect(adjacentProblemId(items, "b", 1)).toBe("c")
+  })
+
+  test("returns null at list boundaries or for an unknown problem", () => {
+    expect(adjacentProblemId(items, "a", -1)).toBeNull()
+    expect(adjacentProblemId(items, "c", 1)).toBeNull()
+    expect(adjacentProblemId(items, "missing", 1)).toBeNull()
+  })
+})
+
+test("paginates with a custom page size", () => {
+  expect(paginateProblems(problems, 1, 10)).toMatchObject({
+    page: 1,
+    totalPages: 2,
+    start: 10,
+    end: 12,
   })
 })

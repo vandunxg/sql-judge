@@ -61,6 +61,11 @@ export function verdictPresentation(
     : verdicts.JudgeError
 }
 
+/** ADR-026: the native sandbox of an installed pack version, which Run always uses. */
+export function packSandboxEnvId(packDigest: string) {
+  return `pack-${packDigest.slice(0, 16)}`
+}
+
 export function environmentForProblem(
   environments: ManagedEnvironmentSummary[],
   problem: { packId: string; packVersion: string; packDigest: string }
@@ -73,7 +78,9 @@ export function environmentForProblem(
       environment.packDigest === problem.packDigest
   )
   const chosen =
-    pinned.find((environment) => environment.state === "ready") ?? pinned[0]
+    pinned.find((environment) => environment.envId === packSandboxEnvId(problem.packDigest)) ??
+    pinned.find((environment) => environment.state === "ready") ??
+    pinned[0]
   return chosen
     ? { namespace: chosen.namespace, ready: chosen.state === "ready" }
     : undefined

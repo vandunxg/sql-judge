@@ -7,11 +7,13 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { routeForHash, routeForLaunch } from "@/app-route-state"
 import { ConnectionsScreen } from "@/features/learning/connections-screen"
 import { EnvironmentsScreen } from "@/features/learning/environments-screen"
+import { ExplorerScreen } from "@/features/learning/explorer-screen"
 import { HistoryScreen } from "@/features/learning/history-screen"
 import { HomeScreen } from "@/features/learning/home-screen"
 import { LearningWorkspace } from "@/features/learning/learning-workspace"
 import { PacksScreen } from "@/features/learning/packs-screen"
 import { ProgressScreen } from "@/features/learning/progress-screen"
+import { SettingsScreen } from "@/features/learning/settings-screen"
 
 const routeTitles: Record<AppRoute, string> = {
   home: "Home",
@@ -22,6 +24,8 @@ const routeTitles: Record<AppRoute, string> = {
   progress: "Progress",
   packs: "Packs",
   connections: "Connections",
+  explorer: "Explorer",
+  settings: "Settings",
 }
 
 function readRoute(): AppRoute {
@@ -63,6 +67,8 @@ export default function App() {
       {route === "progress" ? <ProgressScreen /> : null}
       {route === "packs" ? <PacksScreen /> : null}
       {route === "connections" ? <ConnectionsScreen /> : null}
+      {route === "explorer" ? <ExplorerScreen /> : null}
+      {route === "settings" ? <SettingsScreen /> : null}
     </>
   )
 
@@ -81,7 +87,7 @@ export default function App() {
         }
       >
         <AppSidebar activeRoute={route} />
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <SiteHeader title={routeTitles[route]} />
           {screen}
         </SidebarInset>

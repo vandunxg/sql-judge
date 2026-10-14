@@ -84,7 +84,9 @@ Linux shell. The runtime now:
 
 The instance marker and `NOLOGIN` runner role are unchanged on every platform.
 `.github/workflows/managed-runtime.yml` runs the runtime and native import tests
-on `macos-latest` and `windows-latest` with PostgreSQL left off PATH, since
-these platforms cannot be exercised on a Linux workstation. A lost Credential
+on `macos-latest` and `windows-latest` with PostgreSQL left off PATH (and again
+on macOS under launchd's GUI environment), since these platforms cannot be
+exercised on a Linux workstation. It also uploads the NSIS installer and both
+DMGs as workflow artifacts and launches the packaged app to check it starts. A lost Credential
 Manager entry leaves a Windows cluster unreachable; recovery is a manual
 deletion of `postgres-runtime`.

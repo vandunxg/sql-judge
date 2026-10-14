@@ -7,7 +7,34 @@ on:
       - "v*"
 
 jobs:
+  prepare-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create or find the release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          tag="v$version"
+          if ! release_id=$(gh release view "$tag" --json databaseId --jq .databaseId); then
+            gh release create "$tag" --title "$tag" --generate-notes --draft
+            release_id=$(gh release view "$tag" --json databaseId --jq .databaseId)
+          fi
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   publish-tauri:
+    needs: prepare-release
     permissions:
       contents: write
     strategy:
@@ -39,7 +66,7 @@ jobs:
             platform: "ubuntu-22.04"
             args: "--bundles appimage,deb"
             rustTargets: ""
-            assetPattern: "[name]-[version]-[platform]-[arch][setup][ext]"
+            assetPattern: "[name]-[version]-linux-x86_64[ext]"
             uploadPlainBinary: false
             portableUpload: false
     runs-on: ${{ matrix.platform }}
@@ -76,24 +103,17 @@ jobs:
 
       - name: Build and publish
         id: tauri
-        uses: tauri-apps/tauri-action@action-v0.6.2
+        uses: tauri-apps/tauri-action@action-v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.platform, 'macos-') && '-' || '' }}
         with:
-          tagName: v__VERSION__
-          releaseName: v__VERSION__
-          releaseBody: |
-            See the assets below to download this version.
-            The Windows portable executable requires the Microsoft Edge WebView2 Runtime.
-          releaseDraft: true
-          prerelease: false
-          generateReleaseNotes: true
+          releaseId: ${{ needs.prepare-release.outputs.release_id }}
           retryAttempts: 2
           args: ${{ matrix.args }}
-          assetNamePattern: ${{ matrix.assetPattern }}
+          releaseAssetNamePattern: ${{ matrix.assetPattern }}
           uploadPlainBinary: ${{ matrix.uploadPlainBinary }}
-          includeUpdaterJson: false
+          uploadUpdaterJson: false
 
       - name: Upload Windows portable executable
         if: matrix.portableUpload
@@ -138,14 +158,8 @@ jobs:
           fi
 
           manifest="$RUNNER_TEMP/sql-judge-linux-x86_64.SHA256SUMS"
-          (
-            cd "$(dirname "$appimage")"
-            sha256sum "$(basename "$appimage")"
-          ) > "$manifest"
-          (
-            cd "$(dirname "$deb")"
-            sha256sum "$(basename "$deb")"
-          ) >> "$manifest"
+          printf '%s  sql-judge-${{ steps.tauri.outputs.appVersion }}-linux-x86_64.AppImage\n' "$(sha256sum "$appimage" | awk '{print $1}')" > "$manifest"
+          printf '%s  sql-judge-${{ steps.tauri.outputs.appVersion }}-linux-x86_64.deb\n' "$(sha256sum "$deb" | awk '{print $1}')" >> "$manifest"
           gh release upload "v${{ steps.tauri.outputs.appVersion }}" "$manifest" --clobber
 
       - name: Release summary
@@ -160,3 +174,15 @@ jobs:
             echo "- Release: ${{ steps.tauri.outputs.releaseHtmlUrl }}"
             echo "- Artifacts: \`${{ steps.tauri.outputs.artifactPaths }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-release:
+    needs: [prepare-release, publish-tauri]
+    if: ${{ needs.prepare-release.result == 'success' && needs.publish-tauri.result == 'success' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish release after all assets upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ needs.prepare-release.outputs.tag }}" --draft=false

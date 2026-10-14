@@ -87,6 +87,18 @@ jobs:
           "${finder_env[@]}" "$(test_binary -p judge-postgres --test runtime)"
           "${finder_env[@]}" "$(test_binary --manifest-path src-tauri/Cargo.toml --lib)" native_import
 
+      - name: Show raw PostgreSQL output under a Finder-like environment (macOS, on failure)
+        if: failure() && runner.os == 'macOS'
+        run: |
+          bin="$(brew --prefix postgresql@17)/bin"
+          dir="$(mktemp -d)"
+          finder_env=(env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" TMPDIR="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin)
+          "${finder_env[@]}" "$bin/initdb" -D "$dir/data" --username "$USER" --auth-local=peer --auth-host=reject --encoding=UTF8 --locale=C || true
+          mkdir -p "$dir/socket"
+          "${finder_env[@]}" "$bin/pg_ctl" -D "$dir/data" -l "$dir/server.log" -o "-k '$dir/socket' -c listen_addresses=''" -w start || true
+          cat "$dir/server.log" || true
+          "${finder_env[@]}" "$bin/pg_ctl" -D "$dir/data" -w stop -m fast || true
+
   bundle:
     # Real installers for a human smoke test, plus an automated launch of the packaged app.
     needs: runtime

@@ -2965,7 +2965,7 @@ fn judge_request(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn run_sample(
     request: JudgeRunRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -2973,7 +2973,7 @@ fn run_sample(
     judge_request(request, state.inner(), "run")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn submit_solution(
     request: JudgeRunRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -2981,19 +2981,19 @@ fn submit_solution(
     judge_request(request, state.inner(), "submit")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_judge(request_id: String) -> bool {
     cancel_judge_value(&request_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_connection_profiles(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<Vec<ConnectionProfileSummary>, String> {
     list_connection_profiles_value(state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_connection_profile(
     request: SaveConnectionProfileRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3001,7 +3001,7 @@ fn save_connection_profile(
     save_connection_profile_value(request, state.inner(), &mut SessionSecretVault)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_connection_profile(
     profile_id: String,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3009,14 +3009,14 @@ fn delete_connection_profile(
     delete_connection_profile_value(&profile_id, state.inner(), &mut SessionSecretVault)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_external_sandbox_profiles(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<Vec<ExternalSandboxProfileSummary>, ExternalCommandError> {
     list_external_sandbox_profiles_value(state.inner(), &SessionSecretVault)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn probe_external_sandbox_profile(
     request: ExternalProfileRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3042,7 +3042,7 @@ fn probe_external_sandbox_profile(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_external_sandbox(
     request: CreateExternalSandboxRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3050,7 +3050,7 @@ fn create_external_sandbox(
     create_external_sandbox_value(request, state.inner(), &SessionSecretVault)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_external_sandbox(
     request: DeleteExternalSandboxRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3058,7 +3058,7 @@ fn delete_external_sandbox(
     delete_external_sandbox_value(request, state.inner(), &SessionSecretVault)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn test_external_connection(
     request: ExternalProfileRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3066,7 +3066,7 @@ fn test_external_connection(
     test_external_connection_value(request, state.inner(), &SessionSecretVault)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_external_metadata(
     request: ExternalProfileRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3079,7 +3079,7 @@ fn list_external_metadata(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn execute_external_select(
     request: ExternalSelectRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3087,7 +3087,7 @@ fn execute_external_select(
     execute_external_select_value(request, state.inner(), &SessionSecretVault)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn test_external_sqlserver(
     request: ExternalProfileRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3095,7 +3095,7 @@ fn test_external_sqlserver(
     test_external_sqlserver_value(request, state.inner(), &SessionSecretVault)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_external_sqlserver_metadata(
     request: ExternalProfileRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3108,7 +3108,7 @@ fn list_external_sqlserver_metadata(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn execute_external_sqlserver_select(
     request: ExternalSelectRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3144,7 +3144,7 @@ fn list_environment_summaries(
     Ok(environments)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_managed_environments(
     profile_id: Option<String>,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3155,7 +3155,7 @@ fn list_managed_environments(
     list_environment_summaries(&state, profile_id.as_deref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inspect_managed_environment(
     env_id: String,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3173,7 +3173,7 @@ fn inspect_managed_environment(
         .and_then(managed_environment_summary))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_submission_history(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<Vec<SubmissionHistorySummary>, String> {
@@ -3218,14 +3218,14 @@ fn list_submission_history_value(
         .map_err(|_| "Submission history could not be read.".to_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn export_backup(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<BackupSnapshot, String> {
     export_backup_value(state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn restore_backup(
     snapshot_json: String,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3233,7 +3233,7 @@ fn restore_backup(
     restore_backup_json_value(&snapshot_json, state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_managed_environment(
     request: CreateEnvironmentRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3241,7 +3241,7 @@ fn create_managed_environment(
     create_managed_environment_value(request, state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clone_managed_environment(
     request: CloneEnvironmentRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3249,7 +3249,7 @@ fn clone_managed_environment(
     clone_managed_environment_value(request, state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn reset_managed_environment(
     request: ResetEnvironmentRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3257,7 +3257,7 @@ fn reset_managed_environment(
     reset_managed_environment_value(request, state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_managed_environment(
     request: DeleteEnvironmentRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3265,7 +3265,7 @@ fn delete_managed_environment(
     delete_managed_environment_value(request, state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn import_pack(
     request: ImportPackRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3273,7 +3273,7 @@ fn import_pack(
     import_pack_value(request, state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inspect_managed_pack(
     pack_id: String,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3292,7 +3292,7 @@ fn inspect_managed_pack(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_pack(
     request: DeletePackRequest,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
@@ -3300,14 +3300,14 @@ fn delete_pack(
     delete_pack_value(request, state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_installed_packs(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<Vec<problem_pack::PackCatalogEntry>, String> {
     list_installed_packs_value(state.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn managed_runtime_status(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<ManagedRuntimeStatus, String> {
@@ -3317,7 +3317,7 @@ fn managed_runtime_status(
     Ok(managed_runtime_status_value(state.runtime.is_some()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_managed_runtime(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<ManagedRuntimeStatus, String> {
@@ -3384,6 +3384,8 @@ pub fn run() {
             app.manage(Mutex::new(state));
             Ok(())
         })
+        // Commands are `#[tauri::command(async)]`: a plain command runs on the main thread,
+        // freezing the window during a pack import and queueing Stop behind the judge it cancels.
         .invoke_handler(tauri::generate_handler![
             greet,
             run_sample,

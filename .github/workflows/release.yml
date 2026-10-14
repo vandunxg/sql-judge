@@ -120,6 +120,30 @@ jobs:
           Copy-Item -LiteralPath $binaryPath -Destination $assetPath
           gh release upload "v$version" $assetPath --clobber
 
+      - name: Upload Linux checksum manifest
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          appimage=$(find src-tauri/target/release/bundle -type f -name '*.AppImage' -print -quit)
+          deb=$(find src-tauri/target/release/bundle -type f -name '*.deb' -print -quit)
+          if [ -z "$appimage" ] || [ -z "$deb" ]; then
+            echo "Linux AppImage or DEB artifact is missing." >&2
+            exit 1
+          fi
+
+          manifest="$RUNNER_TEMP/sql-judge-linux-x86_64.SHA256SUMS"
+          (
+            cd "$(dirname "$appimage")"
+            sha256sum "$(basename "$appimage")"
+          ) > "$manifest"
+          (
+            cd "$(dirname "$deb")"
+            sha256sum "$(basename "$deb")"
+          ) >> "$manifest"
+          gh release upload "v${{ steps.tauri.outputs.appVersion }}" "$manifest" --clobber
+
       - name: Release summary
         if: steps.tauri.outputs.releaseHtmlUrl != ''
         shell: bash

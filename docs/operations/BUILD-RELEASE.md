@@ -50,3 +50,44 @@ Offline app binary is not synonymous with self-contained SQL engine. At P1 local
 - [ ] DB recovery/reset fails closed and user-visible status accurate.
 - [ ] Build artifacts validated for all selected architectures, with runtime readiness test and install/uninstall behavior.
 - [ ] Release notes clearly specify whether a preinstalled local PostgreSQL is required.
+
+## Linux release and installer
+
+The release workflow publishes a checksum manifest named
+`sql-judge-linux-x86_64.SHA256SUMS` alongside the Linux AppImage and DEB.
+The installer refuses to continue if the manifest or the matching checksum is
+missing or invalid.
+
+Build locally on Linux:
+
+```bash
+bun install --frozen-lockfile
+bun run tauri build --bundles appimage,deb
+```
+
+Artifacts are written below `src-tauri/target/release/bundle/`. Do not commit
+that directory. The supported public installation command is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vandunxg/sql-judge/main/scripts/install-linux.sh | bash
+```
+
+The default `--system` mode uses `sudo`: Debian-family systems install the
+verified DEB, while other Linux distributions install the verified AppImage
+under `/opt/sql-judge`, add `/usr/local/bin/sql-judge`, and create a desktop
+entry. Use `--user` when system-wide installation is not wanted:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vandunxg/sql-judge/main/scripts/install-linux.sh | bash -s -- --user
+```
+
+The user mode installs under `~/.local/bin` and
+`~/.local/share/applications` without `sudo`. The first release supports
+Linux `x86_64` only; other architectures fail closed. AppImage execution may
+still require the distribution's FUSE/AppImage support. SQL Judge is not a
+bundled PostgreSQL server: install or configure the required local runtime
+separately before judging.
+
+The installer is a convenience wrapper around the GitHub release, not a
+replacement for reviewing release provenance. For sensitive environments,
+download `scripts/install-linux.sh`, inspect it, and execute the local copy.

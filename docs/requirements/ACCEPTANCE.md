@@ -27,6 +27,7 @@ No capability is complete until its AC passes on the implemented target; documen
 | AC-021 | REQ-022 | An explicitly confirmed PostgreSQL sandbox is created only in a generated, marker-owned schema on the selected verified profile; forged IDs, changed targets, unmarked schemas, and profile deletion while referenced are denied without modifying the external database. |
 | AC-022 | REQ-001,023 | Selected OS artifacts produced by CI and tested with actual runtime packaging; otherwise documented as *not yet verified*. |
 | AC-023 | REQ-019,025; NFR-011 | At the artboard viewport and supported responsive widths, each implemented screen matches its corresponding design export for shell geometry, tokens, typography, spacing, radii, borders, shadows, icons, interaction states and loading/empty/error states. Evidence is a rendered comparison; exported HTML is not shipped as production UI. |
+| AC-024 | REQ-026, NFR-010 | On Linux x86_64, the installer selects the verified DEB on Debian-family systems and verified AppImage otherwise, rejects missing/mismatched checksums and unsupported architectures before system mutation, supports `--user` without sudo and `--system` with sudo, and documents the separate PostgreSQL runtime prerequisite. |
 
 ## Required negative/security cases
 - User SQL attempts: two statements; DDL via CTE/function; `pg_sleep`; extension/privileged function; SQL Server `EXEC`, `xp_cmdshell`, cross-DB access; unauthorized metadata access; recursive explosion; oversized rows; invalid encodings; cancellation; connection lost.

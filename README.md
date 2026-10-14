@@ -62,6 +62,29 @@ bun run tauri dev
 
 The app opens on Home. Import a validated pack from **Packs**, then open **Practice** to run or submit a SQL solution. The local runtime is explicit: never point it at a production database.
 
+## Install the latest Linux release
+
+The official release provides a checksum-verified installer for Linux
+`x86_64`. It uses the `.deb` on Debian/Ubuntu-family systems and the
+`.AppImage` on other Linux distributions. Review the script before piping it
+to a shell in a sensitive environment:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vandunxg/sql-judge/main/scripts/install-linux.sh | bash
+```
+
+The default installs system-wide with `sudo`. To install only for the current
+user without `sudo`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vandunxg/sql-judge/main/scripts/install-linux.sh | bash -s -- --user
+```
+
+Only Linux `x86_64` is published in the first release. The installer refuses
+to install when the release checksum is absent or invalid. Installing SQL
+Judge does not install PostgreSQL; configure the required local PostgreSQL
+runtime separately before running judged exercises.
+
 ## Development
 
 ```bash

@@ -6,3 +6,12 @@ export function resizeSplit(
 ) {
   return Math.min(maximum, Math.max(minimum, value + delta))
 }
+
+export function resizeResultSplit(
+  value: number,
+  pointerDelta: number,
+  minimum: number,
+  maximum: number
+) {
+  return resizeSplit(value, -pointerDelta, minimum, maximum)
+}

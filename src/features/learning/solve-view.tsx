@@ -48,7 +48,7 @@ import {
   verdictPresentation,
   type VerdictTone,
 } from "./solve-state"
-import { resizeSplit } from "./solve-layout"
+import { resizeResultSplit, resizeSplit } from "./solve-layout"
 import { statementBlocks } from "./statement-format"
 import type { sqlCompletionItems } from "./sql-completions"
 
@@ -285,7 +285,7 @@ export function SolveView(props: SolveViewProps) {
     const startHeight = resultHeight
     const onMove = (moveEvent: PointerEvent) => {
       setResultHeight(
-        resizeSplit(
+        resizeResultSplit(
           startHeight,
           ((moveEvent.clientY - startY) / container.height) * 100,
           MIN_RESULT_HEIGHT,
@@ -306,7 +306,7 @@ export function SolveView(props: SolveViewProps) {
   }
 
   function keyboardResizeResult(direction: -1 | 1) {
-    setResultHeight((current) => resizeSplit(current, direction * 2, MIN_RESULT_HEIGHT, MAX_RESULT_HEIGHT))
+    setResultHeight((current) => resizeResultSplit(current, direction * 2, MIN_RESULT_HEIGHT, MAX_RESULT_HEIGHT))
   }
 
   return (

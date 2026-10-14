@@ -23,7 +23,7 @@ export function HistoryDetail({ entry, now, onClose }: Props) {
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-col gap-1.5">
           <VerdictChip {...historyChip(entry)} />
-          <h2 id="history-detail-title" className="text-base leading-[1.35] font-semibold">
+          <h2 id="history-detail-title" title={entry.title} className="line-clamp-2 text-base leading-[1.35] font-semibold">
             {entry.title}
           </h2>
         </div>

@@ -41,7 +41,7 @@ export function TopicsCard({ summary }: { summary: ProgressSummary }) {
         >
           <span>
             <span className="text-muted-foreground">Room to grow in {summary.suggestion.topic}. Try </span>
-            <span className="font-medium">{summary.suggestion.title}</span>
+            <span className="min-w-0 truncate font-medium" title={summary.suggestion.title}>{summary.suggestion.title}</span>
           </span>
           <ArrowRight className="size-4 shrink-0" aria-hidden="true" />
         </a>

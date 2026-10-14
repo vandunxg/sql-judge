@@ -106,12 +106,12 @@ function ResumeCard({ problem, pack }: { problem?: LearningProblem; pack?: Insta
       <CardContent className="flex flex-col gap-5 p-6">
         <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-muted-foreground">
           <span className="font-medium">{problem ? "Start your next problem" : "Your workspace is ready"}</span>
-          {pack ? <span>{pack.title}</span> : null}
+          {pack ? <span className="min-w-0 max-w-full truncate" title={pack.title}>{pack.title}</span> : null}
         </div>
         {problem ? (
           <>
             <div>
-              <h2 className="text-xl font-semibold tracking-tight">{problem.title}</h2>
+              <h2 className="min-w-0 line-clamp-2 text-xl font-semibold tracking-tight" title={problem.title}>{problem.title}</h2>
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <DifficultyBadge difficulty={problem.difficulty} />
                 {problem.topics.slice(0, 2).map((topic) => <Badge key={topic} variant="outline">{topic}</Badge>)}
@@ -173,4 +173,3 @@ function ShortcutsCard() {
 function Shortcut({ label, keys }: { label: string; keys: string[] }) {
   return <div className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">{label}</dt><dd className="flex gap-1">{keys.map((key) => <kbd key={key} className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{key}</kbd>)}</dd></div>
 }
-

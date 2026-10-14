@@ -39,7 +39,7 @@ export function ConnectionsDeleteDialog({
       danger
       initialFocus={cancelRef}
       returnFocus={returnFocus}
-      title={<>Delete {profile.displayName}?</>}
+      title={<span className="block min-w-0 truncate" title={`Delete ${profile.displayName}?`}>Delete {profile.displayName}?</span>}
       description={
         <span>
           The saved connection profile and its stored credential are removed

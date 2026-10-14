@@ -58,7 +58,7 @@ export function PackCard({ pack, index, statuses, environments, onDeleted }: Pac
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 id={titleId} className="text-base font-semibold">{pack.title}</h3>
+            <h3 id={titleId} title={pack.title} className="min-w-0 truncate text-base font-semibold">{pack.title}</h3>
             <Badge variant="outline" className={`${packsPillClass} bg-card font-mono font-normal`}>
               v{pack.version}
             </Badge>

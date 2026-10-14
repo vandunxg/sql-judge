@@ -55,7 +55,8 @@ export function HistoryTable({ entries, selectedId, onSelect, compact, now }: Pr
                       id={historyRowButtonId(entry.id)}
                       aria-controls="history-detail"
                       aria-expanded={selected}
-                      className="rounded-sm text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="block max-w-full truncate rounded-sm text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      title={entry.title}
                     >
                       {entry.title}
                     </button>

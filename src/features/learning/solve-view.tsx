@@ -356,7 +356,7 @@ export function SolveView(props: SolveViewProps) {
               ) : problemTab === "description" ? (
                 <>
                   <div className="flex flex-col gap-3">
-                    <h1 className="text-[21px] leading-[1.3] font-semibold tracking-[-0.015em]">
+                    <h1 className="min-w-0 line-clamp-2 text-[21px] leading-[1.3] font-semibold tracking-[-0.015em]" title={problem.title}>
                       {props.position}. {problem.title}
                     </h1>
                     <div className="flex flex-wrap items-center gap-1.5">

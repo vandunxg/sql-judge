@@ -58,9 +58,9 @@ export function PackDeleteDialog({
       initialFocus={fieldRef}
       returnFocus={returnFocus}
       title={
-        <>
+        <span className="block min-w-0 truncate" title={`Delete ${pack.title} v${pack.version}?`}>
           Delete {pack.title} <span className="font-mono text-base">v{pack.version}</span>?
-        </>
+        </span>
       }
       description="The pack and its practice environments are removed from this device. Import the pack again to get it back."
     >

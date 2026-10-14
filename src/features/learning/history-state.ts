@@ -42,6 +42,8 @@ const rangeSeconds: Record<Exclude<HistoryRange, "all">, number> = {
   "30d": 30 * DAY,
 }
 
+export const HISTORY_PAGE_SIZE = 10
+
 function parseCreatedAt(value: string) {
   return /^\d+$/.test(value) ? Number(value) : null
 }
@@ -109,4 +111,12 @@ export function filterHistory(entries: HistoryEntry[], filters: HistoryFilters, 
       (query.length === 0 ||
         `${entry.title} ${entry.packLabel}`.toLowerCase().includes(query))
   )
+}
+
+export function paginateHistory<T>(items: T[], requestedPage: number) {
+  const totalPages = Math.max(1, Math.ceil(items.length / HISTORY_PAGE_SIZE))
+  const page = Math.min(Math.max(0, requestedPage), totalPages - 1)
+  const start = page * HISTORY_PAGE_SIZE
+  const end = Math.min(start + HISTORY_PAGE_SIZE, items.length)
+  return { items: items.slice(start, end), page, totalPages, start, end }
 }

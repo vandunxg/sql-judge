@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { filterHistory, historyChip, historyEntries } from "./history-state"
+import { filterHistory, historyChip, historyEntries, paginateHistory } from "./history-state"
 
 const pack = {
   packId: "hr",
@@ -125,5 +125,15 @@ describe("history filters", () => {
     expect(ids({ range: "1d" })).toEqual(["recent-submit", "recent-run"])
     expect(ids({ range: "30d" })).toEqual(["recent-submit", "recent-run", "week-old"])
     expect(ids({ range: "7d", tab: "submit" })).toEqual(["recent-submit"])
+  })
+})
+
+describe("history pagination", () => {
+  test("pages entries and clamps requests outside the available range", () => {
+    const entries = Array.from({ length: 21 }, (_, index) => ({ id: String(index) }))
+    expect(paginateHistory(entries, 0)).toMatchObject({ page: 0, totalPages: 3, start: 0, end: 10 })
+    expect(paginateHistory(entries, 2)).toMatchObject({ page: 2, totalPages: 3, start: 20, end: 21 })
+    expect(paginateHistory(entries, 99)).toMatchObject({ page: 2, totalPages: 3 })
+    expect(paginateHistory(entries, -1)).toMatchObject({ page: 0, totalPages: 3 })
   })
 })

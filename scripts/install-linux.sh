@@ -60,7 +60,8 @@ download() {
 
 asset_url() {
   local name_pattern=$1
-  sed 's/},{/}\n{/g' "$tmp_dir/release.json" |
+  tr '\n' ' ' < "$tmp_dir/release.json" |
+    sed 's/},[[:space:]]*{/}\n{/g' |
     grep -E '"name"[[:space:]]*:[[:space:]]*"[^"]*'"$name_pattern"'[^\"]*"' |
     sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
     head -n 1 || true

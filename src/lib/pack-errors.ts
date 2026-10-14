@@ -15,7 +15,7 @@ const FALLBACK_PACK_ERROR =
   "Pack import failed closed. No unvalidated pack was published."
 const RUNTIME_START_ERROR = "Managed PostgreSQL runtime could not be started."
 const RUNTIME_START_GUIDANCE =
-  "Managed PostgreSQL runtime could not be started. Install PostgreSQL tools (initdb and pg_ctl) and ensure they are available on PATH."
+  "Managed PostgreSQL runtime could not be started. Install PostgreSQL 14 or newer, including initdb and pg_ctl, with Homebrew, Postgres.app, the official Windows installer or your Linux package manager, then try again."
 const SAFE_RUNTIME_VALIDATION_ERROR =
   /^Pack runtime validation failed for [a-z][a-z0-9-]*\/[a-z][a-z0-9-]*\.$/u
 

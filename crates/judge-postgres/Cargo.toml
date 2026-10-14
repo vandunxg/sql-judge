@@ -12,4 +12,8 @@ postgres-native-tls = "0.5.3"
 serde_json = "1"
 thiserror = "2"
 chrono = "0.4"
-uuid = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring-core = "1"
+windows-native-keyring-store = "1.1"

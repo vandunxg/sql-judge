@@ -1,0 +1,74 @@
+name: Managed runtime
+
+# ADR-013 amendment: proves the managed PostgreSQL runtime and pack import on the desktop
+# platforms that cannot be exercised on a Linux workstation. PostgreSQL is deliberately left
+# off PATH, as it is for an app launched from Finder or the Start menu.
+
+on:
+  push:
+    paths:
+      - "crates/judge-postgres/**"
+      - "crates/problem-pack/**"
+      - "src-tauri/**"
+      - "Cargo.lock"
+      - ".github/workflows/managed-runtime.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Install keg-only PostgreSQL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@17
+          # Unlink any image-provided PostgreSQL so the job proves install-location discovery.
+          brew list --formula | grep '^postgresql' | xargs -n1 brew unlink || true
+
+      - name: Ensure PostgreSQL is installed (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem "$env:ProgramFiles\PostgreSQL\*\bin\initdb.exe" -ErrorAction SilentlyContinue)) {
+            choco install postgresql17 --no-progress -y --params '/Password:ci-only-unused'
+          }
+          Get-ChildItem "$env:ProgramFiles\PostgreSQL\*\bin\initdb.exe"
+
+      - name: Report whether PostgreSQL is on PATH
+        shell: bash
+        run: |
+          if command -v initdb; then
+            echo "::warning::initdb is on PATH, so this run does not prove install-location discovery"
+          fi
+
+      - name: Managed runtime tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p judge-postgres --lib runtime::
+          cargo test -p judge-postgres --test runtime
+
+      - name: Native pack import tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml native_import

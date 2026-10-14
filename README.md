@@ -83,7 +83,9 @@ curl -fsSL https://raw.githubusercontent.com/vandunxg/sql-judge/main/scripts/ins
 Only Linux `x86_64` is published in the first release. The installer refuses
 to install when the release checksum is absent or invalid. Installing SQL
 Judge does not install PostgreSQL; configure the required local PostgreSQL
-runtime separately before running judged exercises.
+runtime separately before running judged exercises. SQL Judge finds PostgreSQL
+14+ on PATH or in the default Homebrew, Postgres.app, Windows installer
+(`C:\Program Files\PostgreSQL\<version>\bin`) and Debian/RHEL locations.
 
 ## Development
 

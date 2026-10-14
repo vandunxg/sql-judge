@@ -422,11 +422,11 @@ impl PackData {
             if name.split('/').count() > MAX_PATH_DEPTH {
                 return Err(PackError::ResourceLimit);
             }
-            if entry.is_dir() {
-                continue;
-            }
             if entry.is_symlink() {
                 return Err(PackError::Symlink(raw_name));
+            }
+            if entry.is_dir() || is_os_metadata(name) {
+                continue;
             }
             if !entry.is_file() {
                 return Err(PackError::NonRegularFile(raw_name));
@@ -1251,6 +1251,9 @@ fn collect_directory(
         if metadata.file_type().is_symlink() {
             return Err(PackError::Symlink(name));
         }
+        if is_os_metadata(&name) {
+            continue;
+        }
         if metadata.is_dir() {
             collect_directory(root, &path, files, entry_count, depth + 1)?;
         } else if metadata.is_file() {
@@ -1330,6 +1333,17 @@ fn sql_file(files: &BTreeMap<String, Vec<u8>>, name: &str) -> Result<String, Pac
 
 fn check_sql(files: &BTreeMap<String, Vec<u8>>, name: &str) -> Result<(), PackError> {
     sql_file(files, name).map(|_| ())
+}
+
+/// Finder and Explorer drop these into any folder they open or compress; they are never pack
+/// content, so they are skipped unread and excluded from the digest.
+fn is_os_metadata(name: &str) -> bool {
+    let file = name.rsplit('/').next().unwrap_or(name);
+    name.split('/').next() == Some("__MACOSX")
+        || file.starts_with("._")
+        || [".DS_Store", "Thumbs.db", "desktop.ini"]
+            .iter()
+            .any(|metadata| file.eq_ignore_ascii_case(metadata))
 }
 
 fn validate_path(name: &str) -> Result<(), PackError> {

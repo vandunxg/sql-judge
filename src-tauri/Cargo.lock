@@ -2238,12 +2238,14 @@ dependencies = [
  "chrono",
  "fallible-iterator 0.2.0",
  "judge-core",
+ "keyring-core",
  "native-tls",
  "postgres",
  "postgres-native-tls",
  "serde_json",
  "thiserror 2.0.21",
  "uuid",
+ "windows-native-keyring-store",
 ]
 
 [[package]]

@@ -3878,6 +3878,37 @@ mod tests {
     }
 
     #[test]
+    fn native_import_works_from_a_macos_style_data_dir_with_finder_metadata() {
+        let root = test_root("macos-import");
+        let data_dir = root
+            .join("Library")
+            .join("Application Support")
+            .join("com.dungnv1.sql-judge");
+        std::fs::create_dir_all(&data_dir).expect("create spaced data dir");
+        let pack = root.join("Downloads").join("hr analytics");
+        copy_tree(&sample_pack_dir(), &pack);
+        std::fs::write(pack.join(".DS_Store"), b"\0\0\0\x01Bud1").expect("write .DS_Store");
+        std::fs::write(pack.join("schema").join("._001-schema.sql"), b"AppleDouble")
+            .expect("write AppleDouble file");
+        let state = Mutex::new(
+            load_environment_state(&data_dir.join("sql-judge.sqlite")).expect("load native state"),
+        );
+
+        let result = import_pack_value(
+            ImportPackRequest {
+                path: pack.to_string_lossy().into_owned(),
+            },
+            &state,
+        )
+        .expect("import pack from a Finder-browsed folder");
+
+        assert_eq!(result.status, "published");
+        assert_eq!(result.pack_id, "hr-analytics");
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn native_run_uses_the_pack_sandbox_and_recreates_it_when_missing() {
         let root = test_root("sandbox-run");
         let mut native_state =

@@ -576,6 +576,88 @@ fn mismatched_dialect_is_rejected() {
 }
 
 #[test]
+fn finder_and_explorer_metadata_files_are_ignored_in_directory_packs() {
+    let (_temp, pack) = copy_sample();
+    let clean = PackData::from_directory(&pack)
+        .expect("load clean pack")
+        .validate()
+        .expect("validate clean pack");
+    fs::write(pack.join(".DS_Store"), b"\0\0\0\x01Bud1").expect("write .DS_Store");
+    fs::write(pack.join("problems/._pack.json"), b"AppleDouble").expect("write AppleDouble");
+    fs::write(pack.join("schema/Thumbs.db"), b"thumbs").expect("write Thumbs.db");
+    fs::write(pack.join("desktop.ini"), b"[.ShellClassInfo]").expect("write desktop.ini");
+
+    let with_metadata = PackData::from_directory(&pack)
+        .expect("load pack with OS metadata")
+        .validate()
+        .expect("OS metadata files are not pack content");
+    assert_eq!(with_metadata.digest(), clean.digest());
+}
+
+#[test]
+fn finder_compressed_zip_metadata_entries_are_ignored() {
+    let mut entries = Vec::new();
+    collect_files(&sample_path(), "", &mut entries);
+    let clean_names: Vec<String> = entries.iter().map(|(name, _)| name.clone()).collect();
+    entries.push((".DS_Store".to_owned(), b"\0\0\0\x01Bud1".to_vec()));
+    for name in &clean_names {
+        entries.push((
+            format!("__MACOSX/{}", apple_double(name)),
+            b"AppleDouble".to_vec(),
+        ));
+    }
+    let (_temp, archive) = write_zip(
+        entries
+            .iter()
+            .map(|(name, content)| (name.as_str(), content.clone()))
+            .collect(),
+    );
+
+    let from_zip = PackData::from_zip(archive)
+        .expect("load Finder zip")
+        .validate()
+        .expect("Finder metadata entries are not pack content");
+    let from_directory = PackData::from_directory(sample_path())
+        .expect("load sample directory")
+        .validate()
+        .expect("validate sample directory");
+    assert_eq!(from_zip.digest(), from_directory.digest());
+}
+
+#[test]
+fn metadata_names_do_not_hide_traversal_or_symlinks() {
+    let (_temp, archive) = write_zip(vec![("../.DS_Store", b"x".to_vec())]);
+    assert!(PackData::from_zip(archive).is_err());
+
+    let (_temp, pack) = copy_sample();
+    std::os::unix::fs::symlink("/etc/passwd", pack.join("schema/.DS_Store"))
+        .expect("create metadata-named symlink");
+    assert!(matches!(
+        PackData::from_directory(pack),
+        Err(PackError::Symlink(_))
+    ));
+}
+
+fn collect_files(root: &Path, prefix: &str, entries: &mut Vec<(String, Vec<u8>)>) {
+    for entry in fs::read_dir(root).expect("read source") {
+        let entry = entry.expect("read entry");
+        let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+        if entry.file_type().expect("entry type").is_dir() {
+            collect_files(&entry.path(), &format!("{name}/"), entries);
+        } else {
+            entries.push((name, fs::read(entry.path()).expect("read file")));
+        }
+    }
+}
+
+fn apple_double(name: &str) -> String {
+    match name.rsplit_once('/') {
+        Some((parent, file)) => format!("{parent}/._{file}"),
+        None => format!("._{name}"),
+    }
+}
+
+#[test]
 fn traversal_and_symlink_sources_are_rejected() {
     let (_temp, pack) = copy_sample();
     std::os::unix::fs::symlink(pack.join("pack.json"), pack.join("escape.json"))

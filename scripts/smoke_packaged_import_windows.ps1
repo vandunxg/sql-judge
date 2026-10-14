@@ -24,11 +24,21 @@ function Wait-Until([string]$Description, [int]$Seconds, [scriptblock]$Probe) {
 # desktop root rather than at the app's main window handle.
 $Root = $Automation::RootElement
 
+# Only the app and its WebView2 processes count; the desktop root also holds the taskbar and
+# tray, whose labels ("No audio device is installed") would otherwise match.
+function Get-AppProcessIds {
+    return @($script:AppProcess.Id) + @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+}
+
+function Get-AppElements($Condition) {
+    $ids = Get-AppProcessIds
+    return $Root.FindAll($Tree::Descendants, $Condition) | Where-Object { $_.Current.ProcessId -in $ids }
+}
+
 function Get-VisibleText {
     $windows = $Root.FindAll($Tree::Children, [System.Windows.Automation.Condition]::TrueCondition) |
         ForEach-Object { "window '$($_.Current.Name)' class=$($_.Current.ClassName) pid=$($_.Current.ProcessId)" }
-    $names = $Root.FindAll($Tree::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
-        Where-Object { $_.Current.ProcessId -in $script:AppProcessIds } |
+    $names = Get-AppElements ([System.Windows.Automation.Condition]::TrueCondition) |
         ForEach-Object { "$($_.Current.ControlType.ProgrammaticName) '$($_.Current.Name)'" } |
         Select-Object -First 200
     return (@($windows) + @($names)) -join "`n"
@@ -36,7 +46,7 @@ function Get-VisibleText {
 
 function Find-Named([string]$Name) {
     $condition = New-Object System.Windows.Automation.PropertyCondition($Automation::NameProperty, $Name)
-    foreach ($element in $Root.FindAll($Tree::Descendants, $condition)) {
+    foreach ($element in Get-AppElements $condition) {
         if ($element.Current.IsEnabled) { return $element }
     }
     return $null
@@ -46,7 +56,7 @@ function Find-Named([string]$Name) {
 # that can actually be invoked counts.
 function Find-Invokable([string]$Name) {
     $condition = New-Object System.Windows.Automation.PropertyCondition($Automation::NameProperty, $Name)
-    foreach ($element in $Root.FindAll($Tree::Descendants, $condition)) {
+    foreach ($element in Get-AppElements $condition) {
         $pattern = $null
         if ($element.Current.IsEnabled -and
             $element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
@@ -62,13 +72,13 @@ function Invoke-Named([string]$Name) {
 }
 
 $process = Start-Process -FilePath $App -PassThru
+$script:AppProcess = $process
 try {
     $null = Wait-Until 'the app window' 60 {
         $process.Refresh()
         if ($process.HasExited) { throw "the app exited with code $($process.ExitCode)" }
         if ($process.MainWindowHandle -ne [IntPtr]::Zero) { $process.MainWindowHandle }
     }
-    $script:AppProcessIds = @($process.Id) + @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
 
     Invoke-Named 'Packs'
     $field = Wait-Until 'the pack path field' 60 { Find-Named 'Local pack path' }
@@ -80,7 +90,7 @@ try {
     Invoke-Named 'Install pack'
 
     $heading = Wait-Until 'the install result' 300 {
-        $Root.FindAll($Tree::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+        Get-AppElements ([System.Windows.Automation.Condition]::TrueCondition) |
             ForEach-Object { $_.Current.Name } |
             Where-Object { $_ -match ' (is (already )?installed|was not installed)$' } |
             Select-Object -First 1

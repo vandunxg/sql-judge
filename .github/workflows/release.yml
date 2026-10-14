@@ -185,4 +185,5 @@ jobs:
       - name: Publish release after all assets upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: gh release edit "${{ needs.prepare-release.outputs.tag }}" --draft=false

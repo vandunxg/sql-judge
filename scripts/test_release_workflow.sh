@@ -19,6 +19,7 @@ grep -Eq '^          uploadUpdaterJson: false$' "$workflow" || fail "updater upl
 grep -Fq 'publish-release:' "$workflow" || fail "release must publish after all matrix uploads"
 grep -Fq 'gh release create "$tag" --title "$tag" --generate-notes --draft' "$workflow" || fail "new releases must start as drafts"
 grep -Fq 'gh release edit "${{ needs.prepare-release.outputs.tag }}" --draft=false' "$workflow" || fail "release must publish only after uploads"
+grep -Fq 'GH_REPO: ${{ github.repository }}' "$workflow" || fail "publish job must identify its repository without a checkout"
 grep -Fq 'assetPattern: "[name]-[version]-linux-x86_64[ext]"' "$workflow" || fail "Linux asset names must match the installer architecture"
 grep -Fq 'sql-judge-${{ steps.tauri.outputs.appVersion }}-linux-x86_64.AppImage' "$workflow" || fail "AppImage checksum name must match the uploaded asset"
 grep -Fq 'sql-judge-${{ steps.tauri.outputs.appVersion }}-linux-x86_64.deb' "$workflow" || fail "DEB checksum name must match the uploaded asset"

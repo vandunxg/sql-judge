@@ -70,6 +70,10 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
+      - name: Validate bundled SQLite on Windows
+        if: matrix.platform == 'windows-latest'
+        run: python scripts/test_windows_sqlite_config.py
+
       - name: Build and publish
         id: tauri
         uses: tauri-apps/tauri-action@action-v0.6.2

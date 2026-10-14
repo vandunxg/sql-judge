@@ -8,8 +8,6 @@ use std::fs;
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
-#[cfg(windows)]
-use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use zip::ZipArchive;
@@ -1256,7 +1254,7 @@ fn collect_directory(
         if metadata.is_dir() {
             collect_directory(root, &path, files, entry_count, depth + 1)?;
         } else if metadata.is_file() {
-            if has_multiple_links(&metadata) {
+            if has_multiple_links(&path, &metadata)? {
                 return Err(PackError::HardLink(name));
             }
             if metadata.len() > MAX_FILE_BYTES as u64 {
@@ -1280,20 +1278,31 @@ fn collect_directory(
     Ok(())
 }
 
-fn has_multiple_links(metadata: &fs::Metadata) -> bool {
-    #[cfg(unix)]
-    {
-        metadata.nlink() > 1
+#[cfg(unix)]
+fn has_multiple_links(_path: &Path, metadata: &fs::Metadata) -> Result<bool, PackError> {
+    Ok(metadata.nlink() > 1)
+}
+
+// `MetadataExt::number_of_links` is nightly-only, so read the link count from the open handle.
+#[cfg(windows)]
+fn has_multiple_links(path: &Path, _metadata: &fs::Metadata) -> Result<bool, PackError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let file = fs::File::open(path)?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `file` keeps the handle open for the call and `info` is a valid out-pointer.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(std::io::Error::last_os_error().into());
     }
-    #[cfg(windows)]
-    {
-        metadata.number_of_links() > 1
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = metadata;
-        false
-    }
+    Ok(info.nNumberOfLinks > 1)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn has_multiple_links(_path: &Path, _metadata: &fs::Metadata) -> Result<bool, PackError> {
+    Ok(false)
 }
 
 fn json_file<T: DeserializeOwned>(

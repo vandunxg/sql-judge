@@ -28,6 +28,11 @@ unsupported compression, oversized entries, and archives whose
 compressed/uncompressed ratio exceeds the defensive limit. ZIP has no portable
 inode/link-count representation, so regular ZIP entries are treated as
 independent files; duplicate file contents are not treated as hardlinks.
+Directory hardlink detection reads the link count from `nlink()` on Unix. On
+Windows, `MetadataExt::number_of_links()` is nightly-only, so the loader opens
+the file and reads `nNumberOfLinks` through `GetFileInformationByHandle` from
+`windows-sys` (Windows-only target dependency, already in both lockfiles via
+other crates).
 It also rejects relative paths over 512 bytes, paths deeper than 16 components,
 archives or directory trees over 4,096 total entries, packs over 2,000 regular
 files, and ZIP compressed payloads over 8 MiB. These limits apply before

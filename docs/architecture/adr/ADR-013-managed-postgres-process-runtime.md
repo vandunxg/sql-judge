@@ -47,6 +47,9 @@ Linux shell. The runtime now:
 - **Initialises UTF-8 with the `C` locale.** Finder-launched apps have no `LANG`,
   which made `initdb` choose `SQL_ASCII` (where `length()` counts bytes). Existing
   clusters keep their encoding.
+- **Runs the tools with `LC_ALL=C` on macOS.** With no locale variables the
+  postmaster aborts with "postmaster became multithreaded during startup"; the
+  macOS runner reproduced it under a Finder-like environment.
 - **Quotes every connection value.** macOS app data lives under
   `Application Support`; unquoted socket paths were split at the space. The
   loopback policy check now parses with the driver's own `Config` parser, so it

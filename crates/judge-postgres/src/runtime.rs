@@ -184,6 +184,10 @@ fn is_running(bin: &Path, root: &Path) -> Result<bool, QueryExecutionError> {
 fn tool(bin: &Path, name: &str) -> Command {
     let mut command = Command::new(bin.join(format!("{name}{EXE_SUFFIX}")));
     command.stdout(Stdio::null()).stderr(Stdio::null());
+    // Without LC_ALL (every Finder launch) macOS starts locale threads and the postmaster
+    // aborts with "postmaster became multithreaded during startup".
+    #[cfg(target_os = "macos")]
+    command.env("LC_ALL", "C");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

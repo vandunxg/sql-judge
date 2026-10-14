@@ -36,3 +36,15 @@ export function parseHash(hash: string): { route: AppRoute; params: URLSearchPar
 export function problemHref(problemKey: string) {
   return `#solve/${encodeURIComponent(problemKey)}`
 }
+
+export function problemKeyFromHash(hash: string) {
+  if (routeForHash(hash) !== "solve") {
+    return undefined
+  }
+  const encodedKey = hash.slice("#solve/".length)
+  try {
+    return decodeURIComponent(encodedKey)
+  } catch {
+    return undefined
+  }
+}

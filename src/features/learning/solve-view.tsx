@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEventHandler,
+  type PointerEventHandler,
+  type ReactNode,
+} from "react"
 import Editor, { type Monaco } from "@monaco-editor/react"
 import {
   ChevronLeft,
@@ -40,11 +48,16 @@ import {
   verdictPresentation,
   type VerdictTone,
 } from "./solve-state"
+import { resizeSplit } from "./solve-layout"
 import { statementBlocks } from "./statement-format"
 import type { sqlCompletionItems } from "./sql-completions"
 
 const MAX_RENDERED_ROWS = 100
 const MAX_RENDERED_CELL_LENGTH = 512
+const MIN_PROBLEM_WIDTH = 25
+const MAX_PROBLEM_WIDTH = 60
+const MIN_RESULT_HEIGHT = 25
+const MAX_RESULT_HEIGHT = 60
 
 const difficultyLabels: Record<ProblemDifficulty, string> = {
   easy: "Easy",
@@ -173,6 +186,8 @@ export function SolveView(props: SolveViewProps) {
   const [problemTab, setProblemTab] = useState<ProblemTab>("description")
   const [resultTab, setResultTab] = useState<ResultTab>("run")
   const [maximized, setMaximized] = useState(false)
+  const [problemWidth, setProblemWidth] = useState(42)
+  const [resultHeight, setResultHeight] = useState(38)
   const [now] = useState(() => Date.now())
   const [cursor, setCursor] = useState({ line: 1, column: 1 })
   const { dark, toggle } = useResolvedTheme()
@@ -235,6 +250,64 @@ export function SolveView(props: SolveViewProps) {
       problem.schema.find((schemaTable) => schemaTable.name === table.name)?.columns.map((column) => column.name) ?? []
     ),
   }))
+
+  function resizeProblemPanel(event: Parameters<PointerEventHandler<HTMLDivElement>>[0]) {
+    const container = event.currentTarget.parentElement?.getBoundingClientRect()
+    if (!container) {
+      return
+    }
+    const startX = event.clientX
+    const startWidth = problemWidth
+    const onMove = (moveEvent: PointerEvent) => {
+      setProblemWidth(
+        resizeSplit(
+          startWidth,
+          ((moveEvent.clientX - startX) / container.width) * 100,
+          MIN_PROBLEM_WIDTH,
+          MAX_PROBLEM_WIDTH
+        )
+      )
+    }
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+  }
+
+  function resizeResultPanel(event: Parameters<PointerEventHandler<HTMLDivElement>>[0]) {
+    const container = event.currentTarget.parentElement?.getBoundingClientRect()
+    if (!container) {
+      return
+    }
+    const startY = event.clientY
+    const startHeight = resultHeight
+    const onMove = (moveEvent: PointerEvent) => {
+      setResultHeight(
+        resizeSplit(
+          startHeight,
+          ((moveEvent.clientY - startY) / container.height) * 100,
+          MIN_RESULT_HEIGHT,
+          MAX_RESULT_HEIGHT
+        )
+      )
+    }
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+  }
+
+  function keyboardResizeProblem(direction: -1 | 1) {
+    setProblemWidth((current) => resizeSplit(current, direction * 2, MIN_PROBLEM_WIDTH, MAX_PROBLEM_WIDTH))
+  }
+
+  function keyboardResizeResult(direction: -1 | 1) {
+    setResultHeight((current) => resizeSplit(current, direction * 2, MIN_RESULT_HEIGHT, MAX_RESULT_HEIGHT))
+  }
 
   return (
     <div className="solve-surface flex min-h-dvh flex-col bg-[var(--solve-bg)] text-sm leading-normal text-foreground">
@@ -320,9 +393,13 @@ export function SolveView(props: SolveViewProps) {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-wrap gap-2 px-2.5 pb-2.5">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 px-2.5 pb-2.5 lg:flex-row">
         {maximized ? null : (
-          <section aria-label="Problem" className={cn(pane, "min-h-[600px] flex-[1_1_440px]")}>
+          <section
+            aria-label="Problem"
+            className={cn(pane, "min-h-[600px] w-full flex-none lg:w-[var(--problem-width)]")}
+            style={{ "--problem-width": `${problemWidth}%` } as CSSProperties}
+          >
             <div className={paneHeader} role="tablist" aria-label="Problem sections">
               <PaneTab selected={problemTab === "description"} onSelect={() => setProblemTab("description")} icon={<FileText className="size-3.5" aria-hidden="true" />}>
                 Description
@@ -520,8 +597,19 @@ export function SolveView(props: SolveViewProps) {
             </div>
           </section>
         )}
+        {maximized ? null : (
+          <ResizeHandle
+            orientation="vertical"
+            label="Resize problem panel"
+            value={problemWidth}
+            minimum={MIN_PROBLEM_WIDTH}
+            maximum={MAX_PROBLEM_WIDTH}
+            onPointerDown={resizeProblemPanel}
+            onKeyboardResize={keyboardResizeProblem}
+          />
+        )}
 
-        <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-2">
+        <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-2 lg:w-0">
           <section aria-label="SQL editor" className={cn(pane, "min-h-[360px] flex-1")}>
             <div className={cn(paneHeader, "justify-between pr-1.5 pl-3")}>
               <div className="flex items-center gap-2.5">
@@ -618,7 +706,21 @@ export function SolveView(props: SolveViewProps) {
           </section>
 
           {maximized ? null : (
-            <section aria-label="Results" className={cn(pane, "min-h-[330px] flex-none")}>
+            <>
+              <ResizeHandle
+                orientation="horizontal"
+                label="Resize result panel"
+                value={resultHeight}
+                minimum={MIN_RESULT_HEIGHT}
+                maximum={MAX_RESULT_HEIGHT}
+                onPointerDown={resizeResultPanel}
+                onKeyboardResize={keyboardResizeResult}
+              />
+              <section
+                aria-label="Results"
+                className={cn(pane, "min-h-[220px] flex-none")}
+                style={{ flexBasis: `${resultHeight}%` }}
+              >
               <div className={paneHeader} role="tablist" aria-label="Result sections">
                 <PaneTab selected={resultTab === "run"} onSelect={() => setResultTab("run")} icon={<Play className="size-3.5" aria-hidden="true" />}>
                   Run result
@@ -634,7 +736,8 @@ export function SolveView(props: SolveViewProps) {
                   result={resultMode === resultTab ? result : null}
                 />
               </div>
-            </section>
+              </section>
+            </>
           )}
         </div>
       </div>
@@ -844,6 +947,72 @@ function PaneTab({
       {icon}
       {children}
     </button>
+  )
+}
+
+function ResizeHandle({
+  orientation,
+  label,
+  value,
+  minimum,
+  maximum,
+  onPointerDown,
+  onKeyboardResize,
+}: {
+  orientation: "horizontal" | "vertical"
+  label: string
+  value: number
+  minimum: number
+  maximum: number
+  onPointerDown: PointerEventHandler<HTMLDivElement>
+  onKeyboardResize: (direction: -1 | 1) => void
+}) {
+  const horizontal = orientation === "horizontal"
+  const onKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
+    const direction = horizontal
+      ? event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowUp"
+          ? -1
+          : 0
+      : event.key === "ArrowRight"
+        ? 1
+        : event.key === "ArrowLeft"
+          ? -1
+          : 0
+    if (direction === 0) {
+      return
+    }
+    event.preventDefault()
+    onKeyboardResize(direction)
+  }
+
+  return (
+    <div
+      role="separator"
+      aria-label={label}
+      aria-orientation={orientation}
+      aria-valuemin={minimum}
+      aria-valuemax={maximum}
+      aria-valuenow={Math.round(value)}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      className={cn(
+        "group relative z-10 shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        horizontal
+          ? "flex h-2 w-full cursor-row-resize items-center justify-center"
+          : "hidden w-2 cursor-col-resize items-center justify-center lg:flex"
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "rounded-full bg-border transition-colors group-hover:bg-ring group-focus-visible:bg-ring",
+          horizontal ? "h-0.5 w-10" : "h-10 w-0.5"
+        )}
+      />
+    </div>
   )
 }
 

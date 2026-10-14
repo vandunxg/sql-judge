@@ -4,7 +4,7 @@ import { AppSidebar, type AppRoute } from "@/components/app-sidebar"
 import { SiteHeader } from "@/components/site-header"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { routeForHash, routeForLaunch } from "@/app-route-state"
+import { problemKeyFromHash, routeForHash } from "@/app-route-state"
 import { ConnectionsScreen } from "@/features/learning/connections-screen"
 import { EnvironmentsScreen } from "@/features/learning/environments-screen"
 import { ExplorerScreen } from "@/features/learning/explorer-screen"
@@ -28,24 +28,12 @@ const routeTitles: Record<AppRoute, string> = {
   settings: "Settings",
 }
 
-function readRoute(): AppRoute {
-  return routeForHash(window.location.hash)
-}
-
-function solveProblemKey() {
-  const encodedKey = window.location.hash.slice("#solve/".length)
-  try {
-    return encodedKey ? decodeURIComponent(encodedKey) : undefined
-  } catch {
-    return undefined
-  }
-}
-
 export default function App() {
-  const [route, setRoute] = useState<AppRoute>(() => routeForLaunch(window.location.hash))
+  const [hash, setHash] = useState(() => window.location.hash)
+  const route = routeForHash(hash)
 
   useEffect(() => {
-    const handleHashChange = () => setRoute(readRoute())
+    const handleHashChange = () => setHash(window.location.hash)
     window.addEventListener("hashchange", handleHashChange)
     if (!window.location.hash) {
       window.history.replaceState(null, "", "#home")
@@ -59,7 +47,7 @@ export default function App() {
       {route === "problems" || route === "solve" ? (
         <LearningWorkspace
           mode={route === "solve" ? "solve" : "problems"}
-          problemKey={route === "solve" ? solveProblemKey() : undefined}
+          problemKey={route === "solve" ? problemKeyFromHash(hash) : undefined}
         />
       ) : null}
       {route === "environments" ? <EnvironmentsScreen /> : null}

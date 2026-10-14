@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { useHistoryData } from "./history-data"
 import { HistoryDetail } from "./history-detail"
 import { HistoryFilterBar } from "./history-filters"
-import { filterHistory, type HistoryFilters } from "./history-state"
+import { filterHistory, paginateHistory, type HistoryFilters } from "./history-state"
 import { historyRowButtonId, HistoryTable } from "./history-table"
 import { historyCardClass, HistoryLoadState, ScreenHeading } from "./history-ui"
 
@@ -19,9 +19,17 @@ export function HistoryScreen() {
   const { compactTables } = useAppSettings()
   const [filters, setFilters] = useState(defaultFilters)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [page, setPage] = useState(0)
 
   const visible = data ? filterHistory(data.entries, filters, data.loadedAt) : []
-  const selected = visible.find((entry) => entry.id === selectedId) ?? null
+  const paged = paginateHistory(visible, page)
+  const selected = paged.items.find((entry) => entry.id === selectedId) ?? null
+
+  function updateFilters(patch: Partial<HistoryFilters>) {
+    setFilters((current) => ({ ...current, ...patch }))
+    setPage(0)
+    setSelectedId(null)
+  }
 
   function close() {
     if (!selected) return
@@ -54,7 +62,7 @@ export function HistoryScreen() {
           <>
             <HistoryFilterBar
               filters={filters}
-              onChange={(patch) => setFilters((current) => ({ ...current, ...patch }))}
+              onChange={updateFilters}
             />
             {data.packsUnavailable ? (
               <p className="text-[13px] text-muted-foreground" role="status">
@@ -63,26 +71,82 @@ export function HistoryScreen() {
             ) : null}
             {visible.length > 0 ? (
               <div className="flex flex-wrap items-start gap-5">
-                <HistoryTable
-                  entries={visible}
-                  selectedId={selected?.id ?? null}
-                  onSelect={setSelectedId}
-                  compact={compactTables}
-                  now={data.loadedAt}
-                />
+                <div className="min-w-0 flex-[3_1_600px]">
+                  <HistoryTable
+                    entries={paged.items}
+                    selectedId={selected?.id ?? null}
+                    onSelect={setSelectedId}
+                    compact={compactTables}
+                    now={data.loadedAt}
+                  />
+                  {paged.totalPages > 1 ? (
+                    <HistoryPagination
+                      page={paged.page}
+                      totalPages={paged.totalPages}
+                      start={paged.start}
+                      end={paged.end}
+                      total={visible.length}
+                      onPageChange={(nextPage) => {
+                        setPage(nextPage)
+                        setSelectedId(null)
+                      }}
+                    />
+                  ) : null}
+                </div>
                 {selected ? <HistoryDetail entry={selected} now={data.loadedAt} onClose={close} /> : null}
               </div>
             ) : (
-              <EmptyHistory
-                hasRecords={data.entries.length > 0}
-                onClear={() => setFilters(defaultFilters)}
-                showAll={() => setFilters({ ...defaultFilters, range: "all" })}
+        <EmptyHistory
+          hasRecords={data.entries.length > 0}
+          onClear={() => updateFilters(defaultFilters)}
+          showAll={() => updateFilters({ ...defaultFilters, range: "all" })}
               />
             )}
           </>
         )}
       </div>
     </main>
+  )
+}
+
+function HistoryPagination({
+  page,
+  totalPages,
+  start,
+  end,
+  total,
+  onPageChange,
+}: {
+  page: number
+  totalPages: number
+  start: number
+  end: number
+  total: number
+  onPageChange: (page: number) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-1 pt-3 text-[13px] text-muted-foreground">
+      <span>Showing {start + 1}–{end} of {total}</span>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page === 0}
+          onClick={() => onPageChange(page - 1)}
+        >
+          Previous
+        </Button>
+        <span aria-live="polite">Page {page + 1} of {totalPages}</span>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page === totalPages - 1}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
   )
 }
 

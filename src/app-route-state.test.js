@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 
-import { parseHash, problemHref, routeForHash, routeForLaunch } from "./app-route-state"
+import { parseHash, problemKeyFromHash, problemHref, routeForHash, routeForLaunch } from "./app-route-state"
 
 test("opens the application on Home", () => {
   expect(routeForLaunch()).toBe("home")
@@ -48,4 +48,9 @@ test("builds a round-trippable Solve link to a problem", () => {
   expect(href).toBe("#solve/hr%401.0.0%23abc%3Ap1")
   expect(routeForHash(href)).toBe("solve")
   expect(decodeURIComponent(href.slice("#solve/".length))).toBe(key)
+})
+
+test("reads the current problem key after navigating between solve hashes", () => {
+  expect(problemKeyFromHash("#solve/first")).toBe("first")
+  expect(problemKeyFromHash("#solve/second")).toBe("second")
 })

@@ -18,10 +18,15 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
 import { parseHash } from "@/app-route-state"
 import { cn } from "@/lib/utils"
 import type { InstalledPack, SubmissionHistorySummary } from "@/lib/judge-api"
-import { catalogProblemKey, type LearningProblem, type ProblemDifficulty } from "./catalog"
+import {
+  catalogProblemKey,
+  type LearningProblem,
+  type ProblemDifficulty,
+} from "./catalog"
 import {
   matchesStatus,
   problemProgress,
@@ -68,7 +73,12 @@ const statusOptions: Array<{ value: StatusFilter; label: string }> = [
   { value: "unattempted", label: "Not attempted" },
 ]
 
-function progressKey(packId: string, version: string, digest: string, problemId: string) {
+function progressKey(
+  packId: string,
+  version: string,
+  digest: string,
+  problemId: string
+) {
   return catalogProblemKey({ packId, version, digest }, problemId)
 }
 
@@ -102,7 +112,9 @@ export function ProblemsList({
   const [query, setQuery] = useState("")
   const [topic, setTopic] = useState("all")
   // Packs links here as `#problems?pack=<id>` to open the list pre-filtered.
-  const [packId, setPackId] = useState(() => parseHash(window.location.hash).params.get("pack") ?? "all")
+  const [packId, setPackId] = useState(
+    () => parseHash(window.location.hash).params.get("pack") ?? "all"
+  )
   const [difficulty, setDifficulty] = useState<ProblemDifficulty | "all">("all")
   const [status, setStatus] = useState<StatusFilter>("all")
   const [topicsExpanded, setTopicsExpanded] = useState(false)
@@ -111,13 +123,22 @@ export function ProblemsList({
   const searchRef = useRef<HTMLInputElement>(null)
 
   const topics = useMemo(() => topicCounts(problems), [problems])
-  const progress = useMemo(() => problemProgress(history, progressKey), [history])
-  const totals = useMemo(() => progressTotals(problems, progress), [problems, progress])
+  const progress = useMemo(
+    () => problemProgress(history, progressKey),
+    [history]
+  )
+  const totals = useMemo(
+    () => progressTotals(problems, progress),
+    [problems, progress]
+  )
   const filtered = useMemo(
     () =>
-      filterCatalogProblems(problems, { query, topic, packId, difficulty }).filter((problem) =>
-        matchesStatus(progress.get(problem.id), status)
-      ),
+      filterCatalogProblems(problems, {
+        query,
+        topic,
+        packId,
+        difficulty,
+      }).filter((problem) => matchesStatus(progress.get(problem.id), status)),
     [difficulty, packId, problems, progress, query, status, topic]
   )
   const topicChips = visibleTopics(topics, {
@@ -173,8 +194,8 @@ export function ProblemsList({
             </h1>
             <p className="text-[15px] text-muted-foreground">
               {problems.length} problem{problems.length === 1 ? "" : "s"} from{" "}
-              {packs.length} installed pack{packs.length === 1 ? "" : "s"}.
-              Open one to start writing SQL.
+              {packs.length} installed pack{packs.length === 1 ? "" : "s"}. Open
+              one to start writing SQL.
             </p>
           </div>
 
@@ -208,7 +229,9 @@ export function ProblemsList({
                     focusRing
                   )}
                 >
-                  {topicsExpanded ? "Show less" : `+${topicChips.hiddenCount} more`}
+                  {topicsExpanded
+                    ? "Show less"
+                    : `+${topicChips.hiddenCount} more`}
                   {topicsExpanded ? (
                     <ChevronUp className="size-3.5" aria-hidden="true" />
                   ) : (
@@ -221,8 +244,11 @@ export function ProblemsList({
 
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex h-9 min-w-0 flex-[1_1_260px] items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm shadow-xs-design focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring">
-              <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <input
+              <Search
+                className="size-4 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
                 ref={searchRef}
                 type="search"
                 value={query}
@@ -232,7 +258,7 @@ export function ProblemsList({
                 placeholder="Search by title or topic"
                 aria-label="Search problems"
                 aria-keyshortcuts="/"
-                className="min-w-0 flex-1 border-0 bg-transparent outline-none placeholder:text-muted-foreground"
+                className="h-auto min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
               />
               <Kbd>/</Kbd>
             </label>
@@ -241,7 +267,10 @@ export function ProblemsList({
               value={packId}
               options={[
                 { value: "all", label: "All packs" },
-                ...packs.map((pack) => ({ value: pack.packId, label: pack.title })),
+                ...packs.map((pack) => ({
+                  value: pack.packId,
+                  label: pack.title,
+                })),
               ]}
               onChange={(value) => updateFilter(() => setPackId(value))}
             />
@@ -264,7 +293,9 @@ export function ProblemsList({
               label="Status"
               value={status}
               options={statusOptions}
-              onChange={(value) => updateFilter(() => setStatus(value as StatusFilter))}
+              onChange={(value) =>
+                updateFilter(() => setStatus(value as StatusFilter))
+              }
             />
             <button
               type="button"
@@ -286,7 +317,11 @@ export function ProblemsList({
             ) : error ? (
               <div className="flex flex-col items-start gap-3 p-6" role="alert">
                 <p className="text-sm text-err">{error}</p>
-                <button type="button" className={outlineButton} onClick={onRetry}>
+                <button
+                  type="button"
+                  className={outlineButton}
+                  onClick={onRetry}
+                >
                   <RefreshCw className="size-4" aria-hidden="true" />
                   Retry
                 </button>
@@ -317,51 +352,85 @@ export function ProblemsList({
                         <th className="py-3 pr-2 pl-5 font-medium">Status</th>
                         <th className="px-3 py-3 font-medium">Problem</th>
                         <th className="px-3 py-3 font-medium">Difficulty</th>
-                        <th className="py-3 pr-5 pl-3 font-medium">Last attempt</th>
+                        <th className="py-3 pr-5 pl-3 font-medium">
+                          Last attempt
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {visible.items.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="h-28 px-5 text-center text-sm text-muted-foreground">
+                          <td
+                            colSpan={4}
+                            className="h-28 px-5 text-center text-sm text-muted-foreground"
+                          >
                             No problems match these filters.
                           </td>
                         </tr>
                       ) : (
                         visible.items.map((problem) => {
                           const entry = progress.get(problem.id)
-                          const topicsText = problem.topics.map(topicLabel).join(", ")
+                          const topicsText = problem.topics
+                            .map(topicLabel)
+                            .join(", ")
                           return (
-                            <tr key={problem.id} className="border-b transition-colors last:border-b-0 hover:bg-hover">
+                            <tr
+                              key={problem.id}
+                              className="border-b transition-colors last:border-b-0 hover:bg-hover"
+                            >
                               <td className="py-3.5 pr-2 pl-5 align-middle">
                                 <StatusIcon status={entry?.status} />
                               </td>
                               <td className="min-w-0 px-3 py-3.5 align-middle">
                                 <a
-                                  className={cn("block truncate font-medium underline-offset-3 hover:underline", focusRing)}
+                                  className={cn(
+                                    "block truncate font-medium underline-offset-3 hover:underline",
+                                    focusRing
+                                  )}
                                   href={solveHref(problem.id)}
                                   title={problem.title}
                                 >
-                                  {problemNumbers.get(problem.id)}. {problem.title}
+                                  {problemNumbers.get(problem.id)}.{" "}
+                                  {problem.title}
                                 </a>
-                                <div className="mt-1 truncate text-[13px] text-muted-foreground" title={topicsText}>
-                                  {packTitles.get(problem.packId) ?? problem.packId}
-                                  {topicsText ? <span className="text-muted-foreground/70"> · {topicsText}</span> : null}
+                                <div
+                                  className="mt-1 truncate text-[13px] text-muted-foreground"
+                                  title={topicsText}
+                                >
+                                  {packTitles.get(problem.packId) ??
+                                    problem.packId}
+                                  {topicsText ? (
+                                    <span className="text-muted-foreground/70">
+                                      {" "}
+                                      · {topicsText}
+                                    </span>
+                                  ) : null}
                                 </div>
                               </td>
                               <td className="px-3 py-3.5 align-middle">
-                                <span className={cn("font-medium", difficultyColors[problem.difficulty])}>
+                                <span
+                                  className={cn(
+                                    "font-medium",
+                                    difficultyColors[problem.difficulty]
+                                  )}
+                                >
                                   {difficultyLabels[problem.difficulty]}
                                 </span>
                               </td>
                               <td className="py-3.5 pr-5 pl-3 align-middle text-[13px]">
                                 {entry ? (
                                   <>
-                                    <div className="truncate">{verdictShortLabel(entry.last.verdict)}</div>
-                                    <div className="mt-1 truncate text-muted-foreground">{relativeTime(entry.last.at, now)}</div>
+                                    <div className="truncate">
+                                      {verdictShortLabel(entry.last.verdict)}
+                                    </div>
+                                    <div className="mt-1 truncate text-muted-foreground">
+                                      {relativeTime(entry.last.at, now)}
+                                    </div>
                                   </>
                                 ) : (
-                                  <span className="text-muted-foreground">—</span>
+                                  <span className="text-muted-foreground">
+                                    —
+                                  </span>
                                 )}
                               </td>
                             </tr>
@@ -387,22 +456,26 @@ export function ProblemsList({
                     >
                       <ChevronLeft className="size-4" aria-hidden="true" />
                     </button>
-                    {pageWindow(visible.page, visible.totalPages).map((pageIndex) => (
-                      <button
-                        key={pageIndex}
-                        type="button"
-                        className={cn(
-                          smallIconButton,
-                          pageIndex === visible.page &&
-                            "border-border bg-card shadow-xs-design"
-                        )}
-                        aria-label={`Page ${pageIndex + 1}`}
-                        aria-current={pageIndex === visible.page ? "page" : undefined}
-                        onClick={() => setPage(pageIndex)}
-                      >
-                        {pageIndex + 1}
-                      </button>
-                    ))}
+                    {pageWindow(visible.page, visible.totalPages).map(
+                      (pageIndex) => (
+                        <button
+                          key={pageIndex}
+                          type="button"
+                          className={cn(
+                            smallIconButton,
+                            pageIndex === visible.page &&
+                              "border-border bg-card shadow-xs-design"
+                          )}
+                          aria-label={`Page ${pageIndex + 1}`}
+                          aria-current={
+                            pageIndex === visible.page ? "page" : undefined
+                          }
+                          onClick={() => setPage(pageIndex)}
+                        >
+                          {pageIndex + 1}
+                        </button>
+                      )
+                    )}
                     <button
                       type="button"
                       className={smallIconButton}
@@ -433,7 +506,14 @@ export function ProblemsList({
                   role="img"
                   aria-label={`${totals.solved} of ${totals.total} solved`}
                 >
-                  <circle cx="18" cy="18" r="15.5" fill="none" stroke="var(--muted)" strokeWidth="3" />
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="15.5"
+                    fill="none"
+                    stroke="var(--muted)"
+                    strokeWidth="3"
+                  />
                   {totals.solved > 0 ? (
                     <circle
                       cx="18"
@@ -448,15 +528,21 @@ export function ProblemsList({
                   ) : null}
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center leading-[1.1]">
-                  <span className="text-[22px] font-semibold">{totals.solved}</span>
-                  <span className="text-xs text-muted-foreground">of {totals.total}</span>
+                  <span className="text-[22px] font-semibold">
+                    {totals.solved}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    of {totals.total}
+                  </span>
                 </div>
               </div>
               <div className="flex flex-1 flex-col gap-2.5 text-[13px]">
                 {(["easy", "medium", "hard"] as const).map((level) => (
                   <div key={level} className="flex flex-col gap-1">
                     <div className="flex justify-between">
-                      <span className={cn("font-medium", difficultyColors[level])}>
+                      <span
+                        className={cn("font-medium", difficultyColors[level])}
+                      >
                         {difficultyLabels[level]}
                       </span>
                       <span className="text-muted-foreground tabular-nums">
@@ -465,8 +551,13 @@ export function ProblemsList({
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                       <span
-                        className={cn("block h-full rounded-full", difficultyBars[level])}
-                        style={{ width: `${totals[level].total ? (totals[level].solved / totals[level].total) * 100 : 0}%` }}
+                        className={cn(
+                          "block h-full rounded-full",
+                          difficultyBars[level]
+                        )}
+                        style={{
+                          width: `${totals[level].total ? (totals[level].solved / totals[level].total) * 100 : 0}%`,
+                        }}
                       />
                     </div>
                   </div>
@@ -546,7 +637,9 @@ function TopicChip({
         <span
           className={cn(
             "font-normal",
-            pressed ? "text-primary-foreground opacity-70" : "text-muted-foreground"
+            pressed
+              ? "text-primary-foreground opacity-70"
+              : "text-muted-foreground"
           )}
         >
           {count}
@@ -567,7 +660,8 @@ function FilterMenu({
   options: Array<{ value: string; label: string }>
   onChange: (value: string) => void
 }) {
-  const selected = value === "all" ? null : options.find((option) => option.value === value)
+  const selected =
+    value === "all" ? null : options.find((option) => option.value === value)
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -575,10 +669,16 @@ function FilterMenu({
         aria-label={selected ? `${label}: ${selected.label}` : `${label}: all`}
       >
         {selected ? selected.label : label}
-        <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
+        <ChevronDown
+          className="size-4 text-muted-foreground"
+          aria-hidden="true"
+        />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto min-w-44">
-        <DropdownMenuRadioGroup value={value} onValueChange={(next) => onChange(String(next))}>
+        <DropdownMenuRadioGroup
+          value={value}
+          onValueChange={(next) => onChange(String(next))}
+        >
           {options.map((option) => (
             <DropdownMenuRadioItem key={option.value} value={option.value}>
               {option.label}
@@ -614,7 +714,9 @@ function PackButton({
       )}
     >
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 text-[13px] font-normal text-muted-foreground tabular-nums">{count}</span>
+      <span className="shrink-0 text-[13px] font-normal text-muted-foreground tabular-nums">
+        {count}
+      </span>
     </button>
   )
 }
@@ -625,7 +727,15 @@ function StatusIcon({ status }: { status?: "solved" | "attempted" }) {
   }
   if (status === "attempted") {
     return (
-      <svg viewBox="0 0 24 24" className="size-4 text-warn" fill="none" stroke="currentColor" strokeWidth="2" role="img" aria-label="Attempted">
+      <svg
+        viewBox="0 0 24 24"
+        className="size-4 text-warn"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        role="img"
+        aria-label="Attempted"
+      >
         <circle cx="12" cy="12" r="9" />
         <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
       </svg>

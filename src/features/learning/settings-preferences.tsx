@@ -4,9 +4,15 @@ import { cn } from "cn"
 
 import { useTheme } from "@/components/theme-provider"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Input } from "@/components/ui/input"
 import { updateSettings, useAppSettings } from "@/lib/app-settings"
 
-import { SettingRow, SettingsSection, SettingSwitch, settingsFocusRing } from "./settings-rows"
+import {
+  SettingRow,
+  SettingsSection,
+  SettingSwitch,
+  settingsFocusRing,
+} from "./settings-rows"
 import { fontSizeFromInput, FONT_SIZE_RANGE } from "./settings-state"
 
 const themeOptions = [
@@ -21,7 +27,11 @@ export function SettingsAppearance() {
 
   return (
     <SettingsSection id="appearance" title="Appearance">
-      <SettingRow title="Theme" titleId="setting-theme" description="Match your system, or pick one.">
+      <SettingRow
+        title="Theme"
+        titleId="setting-theme"
+        description="Match your system, or pick one."
+      >
         <ToggleGroup
           aria-labelledby="setting-theme"
           spacing={0.5}
@@ -84,7 +94,7 @@ export function SettingsEditor() {
         description="Applies to the SQL editor."
       >
         <div className="flex h-9 items-center overflow-hidden rounded-lg border border-input bg-card focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring">
-          <input
+          <Input
             type="number"
             inputMode="numeric"
             min={FONT_SIZE_RANGE.min}
@@ -94,9 +104,12 @@ export function SettingsEditor() {
             value={draftSize ?? settings.editorFontSize}
             onChange={(event) => changeSize(event.target.value)}
             onBlur={() => setDraftSize(null)}
-            className="h-full w-[72px] [appearance:textfield] bg-transparent px-2.5 text-right font-mono text-[13.5px] outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="h-full w-[72px] [appearance:textfield] border-0 bg-transparent px-2.5 text-right font-mono text-[13.5px] shadow-none focus-visible:ring-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
-          <span aria-hidden="true" className="flex h-full items-center border-l border-border bg-sidebar px-2.5 text-[13px] text-muted-foreground">
+          <span
+            aria-hidden="true"
+            className="flex h-full items-center border-l border-border bg-sidebar px-2.5 text-[13px] text-muted-foreground"
+          >
             px
           </span>
         </div>

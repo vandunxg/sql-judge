@@ -1,6 +1,4 @@
-import { LockKeyhole, Plus } from "lucide-react"
-
-import { Button } from "@/components/ui/button"
+import { LockKeyhole } from "lucide-react"
 import type { ConnectionProfileSummary } from "@/lib/judge-api"
 
 import type { ProfileCheck } from "./connections-check"
@@ -13,8 +11,6 @@ type ProfileListProps = {
   error: string | null
   selectedId: string | null
   checks: Record<string, ProfileCheck>
-  disabled: boolean
-  onNew: () => void
   onSelect: (profile: ConnectionProfileSummary) => void
   onRetry: () => void
 }
@@ -25,25 +21,27 @@ export function ConnectionsProfileList({
   error,
   selectedId,
   checks,
-  disabled,
-  onNew,
   onSelect,
   onRetry,
 }: ProfileListProps) {
   return (
-    <section aria-label="Saved profiles" className="flex min-w-0 flex-[1_1_280px] flex-col gap-3">
-      <Button variant="outline" className="justify-start bg-card shadow-xs" onClick={onNew} disabled={disabled}>
-        <Plus /> New profile
-      </Button>
+    <section
+      aria-label="Saved profiles"
+      className="flex min-w-0 flex-[1_1_280px] flex-col gap-3"
+    >
       {phase === "loading" ? (
-        <p role="status" className={`${surfaceCardClass} p-4 text-sm text-muted-foreground`}>
+        <p
+          role="status"
+          className={`${surfaceCardClass} p-4 text-sm text-muted-foreground`}
+        >
           Loading saved connection profiles...
         </p>
       ) : phase === "error" && error ? (
         <ErrorNotice message={error} onRetry={onRetry} />
       ) : phase === "empty" ? (
         <p className={`${surfaceCardClass} p-4 text-sm text-muted-foreground`}>
-          No saved profiles yet. Create one to browse your own database read-only.
+          No saved profiles yet. Create one to browse your own database
+          read-only.
         </p>
       ) : (
         <ul className={`${surfaceCardClass} flex flex-col gap-0.5 p-1.5`}>
@@ -62,8 +60,8 @@ export function ConnectionsProfileList({
       <div className="flex gap-2.5 rounded-[10px] bg-muted px-3.5 py-3 text-[13px] text-muted-foreground">
         <LockKeyhole className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         <span>
-          Passwords live in your system keychain. They're never shown again, written to logs or
-          included in backups.
+          Passwords live in your system keychain. They're never shown again,
+          written to logs or included in backups.
         </span>
       </div>
     </section>
@@ -92,7 +90,9 @@ function ProfileRow({
       <span className="flex min-w-0 flex-1 flex-col leading-[1.35]">
         <span className="truncate font-medium">{profile.displayName}</span>
         {check && !check.ok ? (
-          <span className="truncate text-[12.5px] text-err">{check.message}</span>
+          <span className="truncate text-[12.5px] text-err">
+            {check.message}
+          </span>
         ) : (
           <span className="truncate text-[12.5px] text-muted-foreground">
             {profile.host}:{profile.port}
@@ -106,7 +106,9 @@ function ProfileRow({
           className={`size-2 shrink-0 rounded-full ${check.ok ? "bg-ok" : "bg-err"}`}
         />
       ) : (
-        <span className="shrink-0 text-xs text-muted-foreground">Not tested</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          Not tested
+        </span>
       )}
     </button>
   )

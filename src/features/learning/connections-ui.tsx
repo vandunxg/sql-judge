@@ -11,9 +11,6 @@ export const surfaceCardClass =
 
 export const fieldInputClass = "h-9 bg-card px-3 text-sm md:text-sm dark:bg-card"
 
-export const nativeSelectClass =
-  "h-9 w-full min-w-0 rounded-lg border border-input bg-card px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-
 export const smallButtonClass = "h-8 gap-1.5 px-2.5 text-[13px]"
 
 const ENGINE_CHIPS: Record<Engine, { short: string; className: string }> = {

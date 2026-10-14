@@ -14,6 +14,7 @@ import {
   shouldFocusModalContainer,
   shouldDismissModalOnEscape,
 } from "@/lib/modal-a11y"
+import { cn } from "@/lib/utils"
 
 const FOCUSABLE_SELECTOR =
   'a[href], area[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -31,6 +32,9 @@ export function AccessibleModal({
   restoreFocusRef,
   onCancel,
   children,
+  className,
+  headerClassName,
+  role = "alertdialog",
 }: {
   open: boolean
   title: ReactNode
@@ -40,6 +44,9 @@ export function AccessibleModal({
   restoreFocusRef?: RefObject<HTMLElement | null>
   onCancel: () => void
   children: ReactNode
+  className?: string
+  headerClassName?: string
+  role?: "dialog" | "alertdialog"
 }) {
   const dialogRef = useRef<HTMLElement>(null)
   const titleId = useId()
@@ -153,8 +160,11 @@ export function AccessibleModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
       <section
         ref={dialogRef}
-        className="w-full max-w-md rounded-lg border border-amber-500/40 bg-background p-4 shadow-lg"
-        role="alertdialog"
+        className={cn(
+          "w-full max-w-md rounded-lg border border-amber-500/40 bg-background p-4 shadow-lg",
+          className
+        )}
+        role={role}
         aria-modal="true"
         aria-busy={busy}
         aria-labelledby={titleId}
@@ -162,15 +172,17 @@ export function AccessibleModal({
         tabIndex={-1}
         onKeyDown={handleKeyDown}
       >
-        <h2 id={titleId} className="text-sm font-semibold">
-          {title}
-        </h2>
-        <p
-          id={descriptionId}
-          className="mt-1 text-xs leading-5 text-muted-foreground"
-        >
-          {description}
-        </p>
+        <header className={headerClassName}>
+          <h2 id={titleId} className="text-sm font-semibold">
+            {title}
+          </h2>
+          <p
+            id={descriptionId}
+            className="mt-1 text-xs leading-5 text-muted-foreground"
+          >
+            {description}
+          </p>
+        </header>
         {children}
       </section>
     </div>,

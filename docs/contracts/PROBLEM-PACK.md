@@ -24,7 +24,8 @@ The reference pack is `examples/packs/hr-analytics` (eight problems); its distri
 
 ## Idempotence and versioning
 - Identity: `(pack.id, pack.version, content_sha256)`. Distinct hash with same ID+version is rejected (immutable version); unchanged hash may be a no-op.
-- SemVer pack.version, immutable installed content dir keyed by digest, never silently mutate installed pack version.
+- SemVer pack.version, immutable installed content keyed by digest, never silently mutate installed pack version. Installed content lives in the local SQLite catalog (`packs`, `pack_problems`, `pack_problem_tests`), written in one transaction after structural and runtime validation (ADR-025). Deleting a pack requires explicit confirmation, deletes its managed environments through the ownership-verified path, and keeps submission history.
+- Each installed pack version gets an app-managed sandbox environment (`sj_pack_<digest prefix>`) provisioned with the pack schema. Run loads each public fixture into it inside a rolled-back, read-only transaction; Submit uses disposable fixture schemas (ADR-026).
 - Each submission stores pack ID, version, hash, PostgreSQL server version and policy version.
 - Import: stage -> validate paths + JSON contract -> dialect check -> create ephemeral env -> apply schema and fixtures per test -> check reference execution + output shape -> persist files/metadata atomically. On failure preserve previously installed versions and previous active env.
 

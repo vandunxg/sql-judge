@@ -1,0 +1,62 @@
+import { useId, useRef, useState, type RefObject } from "react"
+import { Trash2 } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
+import type { ConnectionProfileSummary } from "@/lib/judge-api"
+
+import { EnvironmentDialog } from "./environments-dialog"
+
+export function ConnectionsDeleteDialog({
+  profile,
+  returnFocus,
+  onCancel,
+  onDelete,
+}: {
+  profile: ConnectionProfileSummary
+  returnFocus: RefObject<HTMLElement | null>
+  onCancel: () => void
+  onDelete: () => Promise<string | null>
+}) {
+  const descriptionId = useId()
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function confirm() {
+    setBusy(true)
+    setError(null)
+    const nextError = await onDelete()
+    if (nextError) {
+      setError(nextError)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <EnvironmentDialog
+      open
+      busy={busy}
+      onClose={onCancel}
+      icon={<Trash2 />}
+      danger
+      initialFocus={cancelRef}
+      returnFocus={returnFocus}
+      title={<>Delete {profile.displayName}?</>}
+      description={
+        <span id={descriptionId}>
+          The saved connection profile and its stored credential are removed from this device.
+        </span>
+      }
+    >
+      {error ? <p className="text-[13px] text-err" role="alert">{error}</p> : null}
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button ref={cancelRef} type="button" variant="outline" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={() => void confirm()} disabled={busy} className="bg-destructive text-white hover:bg-destructive/90">
+          {busy ? "Deleting..." : "Delete profile"}
+        </Button>
+      </div>
+    </EnvironmentDialog>
+  )
+}

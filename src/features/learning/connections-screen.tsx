@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 
 import { readConnectionProfileError } from "@/lib/connection-errors"
 import { deleteConnectionProfile, saveConnectionProfile, type ConnectionProfileSummary } from "@/lib/judge-api"
@@ -8,6 +8,7 @@ import { useProfileChecks } from "./connections-check"
 import { EMPTY_DRAFT, draftFromProfile, saveRequestFromDraft } from "./connections-profile"
 import { ConnectionsProfileForm } from "./connections-profile-form"
 import { ConnectionsProfileList } from "./connections-profile-list"
+import { ConnectionsDeleteDialog } from "./connections-delete-dialog"
 import { isConnectionProfileEditorDisabled } from "./connections-state"
 import { useConnectionProfiles } from "./connections-use-profiles"
 
@@ -18,6 +19,8 @@ export function ConnectionsScreen() {
   const [draft, setDraft] = useState(EMPTY_DRAFT)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pendingDeletion, setPendingDeletion] = useState<ConnectionProfileSummary | null>(null)
+  const deleteOpenerRef = useRef<HTMLElement | null>(null)
   const desktopAvailable = isTauri()
   const editorDisabled = isConnectionProfileEditorDisabled(desktopAvailable, busy)
   const saved = profilesState.profiles.find((profile) => profile.profileId === selectedId)
@@ -43,10 +46,7 @@ export function ConnectionsScreen() {
     }
   }
 
-  async function remove(profile: ConnectionProfileSummary) {
-    if (!window.confirm(`Delete connection profile "${profile.displayName}"?`)) {
-      return
-    }
+  async function remove(profile: ConnectionProfileSummary): Promise<string | null> {
     setBusy(true)
     setError(null)
     try {
@@ -54,8 +54,10 @@ export function ConnectionsScreen() {
       profilesState.remove(profile.profileId)
       forget(profile.profileId)
       select(null)
+      setPendingDeletion(null)
+      return null
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Profile could not be deleted.")
+      return reason instanceof Error ? reason.message : "Profile could not be deleted."
     } finally {
       setBusy(false)
     }
@@ -96,11 +98,23 @@ export function ConnectionsScreen() {
             error={error}
             onChange={setDraft}
             onSave={() => void save()}
-            onDelete={() => saved && void remove(saved)}
+            onDelete={() => {
+              if (saved) {
+                setPendingDeletion(saved)
+              }
+            }}
             onTest={() => saved && void test(saved)}
           />
         </div>
       </div>
+      {pendingDeletion ? (
+        <ConnectionsDeleteDialog
+          profile={pendingDeletion}
+          returnFocus={deleteOpenerRef}
+          onCancel={() => setPendingDeletion(null)}
+          onDelete={() => remove(pendingDeletion)}
+        />
+      ) : null}
     </main>
   )
 }

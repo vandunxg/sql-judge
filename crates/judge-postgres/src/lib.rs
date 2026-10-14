@@ -1,7 +1,8 @@
 use fallible_iterator::FallibleIterator;
 use judge_core::{Column, LogicalType, QueryLimits, QueryResult, SqlValue};
 use postgres::{
-    Client, Config, NoTls, Row,
+    Client, Config, GenericClient, NoTls, Row,
+    config::SslMode,
     types::{FromSql, ToSql, Type},
 };
 use postgres_native_tls::MakeTlsConnector;
@@ -17,7 +18,8 @@ mod orchestrator;
 mod runtime;
 
 pub use orchestrator::{
-    JudgeCase, SubmissionReport, TestOutcome, judge_submission, judge_submission_with_cancel,
+    JudgeCase, SubmissionReport, TestOutcome, judge_submission,
+    judge_submission_in_namespace_with_watchdog_token, judge_submission_with_cancel,
     judge_submission_with_token, judge_submission_with_watchdog,
     judge_submission_with_watchdog_token,
 };
@@ -90,10 +92,196 @@ pub enum ExternalPostgresError {
     DatabaseError,
     #[error("external PostgreSQL returned an unsupported type: {0}")]
     UnsupportedType(String),
+    #[error("external sandbox ownership verification failed")]
+    OwnershipVerificationFailed,
 }
 
 pub struct ExternalPostgresExplorer {
     client: Client,
+}
+
+/// A writable external target is intentionally separate from the read-only explorer.
+/// Its caller must supply the exact `sj_` namespace that may be created or removed.
+pub struct ExternalSandboxConfig {
+    connection: ExternalPostgresConfig,
+    profile_id: String,
+    environment_id: String,
+    namespace: String,
+    ownership_nonce: String,
+}
+
+impl ExternalSandboxConfig {
+    pub fn new(
+        connection: ExternalPostgresConfig,
+        profile_id: impl Into<String>,
+        environment_id: impl Into<String>,
+        namespace: impl Into<String>,
+        ownership_nonce: impl Into<String>,
+    ) -> Result<Self, ExternalPostgresError> {
+        validate_external_config(&connection)?;
+        let config = Self {
+            connection,
+            profile_id: profile_id.into(),
+            environment_id: environment_id.into(),
+            namespace: namespace.into(),
+            ownership_nonce: ownership_nonce.into(),
+        };
+        for value in [
+            &config.profile_id,
+            &config.environment_id,
+            &config.ownership_nonce,
+        ] {
+            if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+                return Err(ExternalPostgresError::InvalidProfile("sandbox identity"));
+            }
+        }
+        if !is_safe_namespace(&config.namespace) {
+            return Err(ExternalPostgresError::InvalidProfile("namespace"));
+        }
+        Ok(config)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalSandboxTargetIdentity {
+    pub database: String,
+    pub database_oid: u32,
+    pub system_identifier: String,
+}
+
+pub struct ExternalPostgresSandbox {
+    client: Client,
+    config: ExternalSandboxConfig,
+    target: ExternalSandboxTargetIdentity,
+}
+
+impl ExternalPostgresSandbox {
+    pub fn connect(config: ExternalSandboxConfig) -> Result<Self, ExternalPostgresError> {
+        let mut client = connect_external_client(&config.connection)?;
+        // This privileged catalog function is a required capability: without a stable server
+        // identity, an external target cannot safely be bound to a destructive sandbox marker.
+        let target = client
+            .query_one(
+                "SELECT current_database(),
+                        (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())::text,
+                        (pg_catalog.pg_control_system()).system_identifier::text",
+                &[],
+            )
+            .map_err(map_external_connection_error)
+            .and_then(|row| {
+                let database_oid = row
+                    .get::<_, String>(1)
+                    .parse::<u32>()
+                    .map_err(|_| ExternalPostgresError::DatabaseError)?;
+                Ok(ExternalSandboxTargetIdentity {
+                    database: row.get(0),
+                    database_oid,
+                    system_identifier: row.get(2),
+                })
+            })?;
+        Ok(Self {
+            client,
+            config,
+            target,
+        })
+    }
+
+    pub fn target_identity(&self) -> &ExternalSandboxTargetIdentity {
+        &self.target
+    }
+
+    pub fn provision(&mut self) -> Result<(), ExternalPostgresError> {
+        let schema = quote_identifier(&self.config.namespace);
+        let marker = format!("{schema}.\"__sql_judge_external_sandbox\"");
+        let mut transaction = self
+            .client
+            .transaction()
+            .map_err(map_external_connection_error)?;
+        let result = (|| {
+            let schema_exists = transaction
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = $1)",
+                    &[&self.config.namespace],
+                )
+                .map_err(map_external_connection_error)?
+                .get::<_, bool>(0);
+            if schema_exists {
+                return Err(ExternalPostgresError::OwnershipVerificationFailed);
+            }
+            transaction
+                .batch_execute(&format!(
+                    "CREATE SCHEMA {schema};
+                     REVOKE ALL ON SCHEMA {schema} FROM PUBLIC;
+                     CREATE TABLE {marker} (
+                       marker_key text PRIMARY KEY CHECK (marker_key = 'external-sandbox'),
+                       environment_id text NOT NULL,
+                       profile_id text NOT NULL,
+                       ownership_nonce text NOT NULL,
+                       database_name text NOT NULL,
+                       database_oid text NOT NULL,
+                       system_identifier text NOT NULL
+                     );
+                     REVOKE ALL ON TABLE {marker} FROM PUBLIC"
+                ))
+                .map_err(map_external_connection_error)?;
+            transaction
+                .execute(
+                    &format!(
+                        "INSERT INTO {marker}
+                         (marker_key, environment_id, profile_id, ownership_nonce, database_name, database_oid, system_identifier)
+                         VALUES ('external-sandbox', $1, $2, $3, $4, $5, $6)"
+                    ),
+                    &[
+                        &self.config.environment_id,
+                        &self.config.profile_id,
+                        &self.config.ownership_nonce,
+                        &self.target.database,
+                        &self.target.database_oid.to_string(),
+                        &self.target.system_identifier,
+                    ],
+                )
+                .map_err(map_external_connection_error)?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => transaction
+                .commit()
+                .map_err(map_external_connection_error)?,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+        }
+        if self.verify_ownership()? {
+            Ok(())
+        } else {
+            Err(ExternalPostgresError::OwnershipVerificationFailed)
+        }
+    }
+
+    pub fn verify_ownership(&mut self) -> Result<bool, ExternalPostgresError> {
+        self.marker_is_owned()
+    }
+
+    pub fn delete_owned_schema(&mut self) -> Result<(), ExternalPostgresError> {
+        let schema = quote_identifier(&self.config.namespace);
+        let mut transaction = self
+            .client
+            .transaction()
+            .map_err(map_external_connection_error)?;
+        if !marker_is_owned(&mut transaction, &self.config, &self.target)? {
+            let _ = transaction.rollback();
+            return Err(ExternalPostgresError::OwnershipVerificationFailed);
+        }
+        transaction
+            .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+            .map_err(map_external_connection_error)?;
+        transaction.commit().map_err(map_external_connection_error)
+    }
+
+    fn marker_is_owned(&mut self) -> Result<bool, ExternalPostgresError> {
+        marker_is_owned(&mut self.client, &self.config, &self.target)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,38 +335,9 @@ pub struct ExternalMetadata {
 
 impl ExternalPostgresExplorer {
     pub fn connect(config: ExternalPostgresConfig) -> Result<Self, ExternalPostgresError> {
-        validate_external_config(&config)?;
-        let mut connection = Config::new();
-        connection
-            .host(&config.host)
-            .port(config.port)
-            .dbname(&config.database)
-            .user(&config.username)
-            .password(&config.password);
-
-        let client = match config.tls_mode {
-            ExternalTlsMode::Disable => connection
-                .connect(NoTls)
-                .map_err(map_external_connection_error)?,
-            ExternalTlsMode::VerifyFull | ExternalTlsMode::Require => {
-                let connector = native_tls::TlsConnector::builder()
-                    .build()
-                    .map_err(|_| ExternalPostgresError::TlsFailed)?;
-                connection
-                    .connect(MakeTlsConnector::new(connector))
-                    .map_err(map_external_connection_error)?
-            }
-            ExternalTlsMode::VerifyCa => {
-                let connector = native_tls::TlsConnector::builder()
-                    .danger_accept_invalid_hostnames(true)
-                    .build()
-                    .map_err(|_| ExternalPostgresError::TlsFailed)?;
-                connection
-                    .connect(MakeTlsConnector::new(connector))
-                    .map_err(map_external_connection_error)?
-            }
-        };
-        Ok(Self { client })
+        Ok(Self {
+            client: connect_external_client(&config)?,
+        })
     }
 
     pub fn test_connection(&mut self) -> Result<ExternalConnectionInfo, ExternalPostgresError> {
@@ -202,10 +361,10 @@ impl ExternalPostgresExplorer {
                                 FROM pg_catalog.pg_roles r
                                 WHERE r.rolname = current_user
                             ), true) AS role_write,
-                            (
-                                has_database_privilege(current_user, current_database(), 'CREATE')
-                                OR has_database_privilege(current_user, current_database(), 'TEMPORARY')
-                            ) AS database_write,
+                            -- TEMPORARY is granted to PUBLIC by default and only allows
+                            -- session-local objects, which READ ONLY transactions also block.
+                            has_database_privilege(current_user, current_database(), 'CREATE')
+                                AS database_write,
                             EXISTS (
                                 SELECT 1
                                 FROM pg_catalog.pg_namespace n
@@ -427,6 +586,79 @@ impl ExternalPostgresExplorer {
     }
 }
 
+fn connect_external_client(
+    config: &ExternalPostgresConfig,
+) -> Result<Client, ExternalPostgresError> {
+    validate_external_config(config)?;
+    let mut connection = Config::new();
+    connection
+        .host(&config.host)
+        .port(config.port)
+        .dbname(&config.database)
+        .user(&config.username)
+        .password(&config.password);
+    if config.tls_mode != ExternalTlsMode::Disable {
+        // The driver default (`prefer`) silently continues in plaintext when the server declines TLS.
+        connection.ssl_mode(SslMode::Require);
+    }
+    match config.tls_mode {
+        ExternalTlsMode::Disable => connection
+            .connect(NoTls)
+            .map_err(map_external_connection_error),
+        ExternalTlsMode::VerifyFull | ExternalTlsMode::Require => {
+            let connector = native_tls::TlsConnector::builder()
+                .build()
+                .map_err(|_| ExternalPostgresError::TlsFailed)?;
+            connection
+                .connect(MakeTlsConnector::new(connector))
+                .map_err(map_external_connection_error)
+        }
+        ExternalTlsMode::VerifyCa => {
+            let connector = native_tls::TlsConnector::builder()
+                .danger_accept_invalid_hostnames(true)
+                .build()
+                .map_err(|_| ExternalPostgresError::TlsFailed)?;
+            connection
+                .connect(MakeTlsConnector::new(connector))
+                .map_err(map_external_connection_error)
+        }
+    }
+}
+
+fn marker_is_owned(
+    client: &mut impl GenericClient,
+    config: &ExternalSandboxConfig,
+    target: &ExternalSandboxTargetIdentity,
+) -> Result<bool, ExternalPostgresError> {
+    let schema = quote_identifier(&config.namespace);
+    let marker = format!("{schema}.\"__sql_judge_external_sandbox\"");
+    let marker_is_owned = client
+        .query_opt(
+            &format!(
+                "SELECT m.environment_id, m.profile_id, m.ownership_nonce,
+                        m.database_name, m.database_oid, m.system_identifier,
+                        n.nspowner = u.usesysid AND c.relowner = u.usesysid
+                 FROM {marker} m
+                 JOIN pg_catalog.pg_namespace n ON n.nspname = $1
+                 JOIN pg_catalog.pg_class c
+                   ON c.relnamespace = n.oid AND c.relname = $2 AND c.relkind IN ('r', 'p')
+                 JOIN pg_catalog.pg_user u ON u.usename = current_user"
+            ),
+            &[&config.namespace, &"__sql_judge_external_sandbox"],
+        )
+        .map_err(map_external_connection_error)?
+        .is_some_and(|row| {
+            row.get::<_, String>(0) == config.environment_id
+                && row.get::<_, String>(1) == config.profile_id
+                && row.get::<_, String>(2) == config.ownership_nonce
+                && row.get::<_, String>(3) == target.database
+                && row.get::<_, String>(4) == target.database_oid.to_string()
+                && row.get::<_, String>(5) == target.system_identifier
+                && row.get::<_, bool>(6)
+        });
+    Ok(marker_is_owned)
+}
+
 fn validate_external_limits(limits: &QueryLimits) -> Result<(), ExternalPostgresError> {
     limits
         .validate()
@@ -530,6 +762,14 @@ fn map_external_connection_error(error: postgres::Error) -> ExternalPostgresErro
             "28P01" | "28000" => ExternalPostgresError::AuthenticationFailed,
             _ => ExternalPostgresError::DatabaseError,
         };
+    }
+    // The driver keeps its error kind private; its TLS kind always renders with this prefix,
+    // including "server does not support TLS". The text is only classified, never returned.
+    if error
+        .to_string()
+        .starts_with("error performing TLS handshake")
+    {
+        return ExternalPostgresError::TlsFailed;
     }
     let mut source = error.source();
     while let Some(cause) = source {
@@ -933,6 +1173,70 @@ impl PostgresSession {
             Err(QueryExecutionError::RuntimeError)
         } else {
             setup
+        }
+    }
+
+    /// Loads one fixture into an owned managed namespace inside a transaction that is always
+    /// rolled back, then runs `operation` as the constrained runner with the transaction
+    /// switched to read-only (ADR-026). The namespace's committed state never changes.
+    pub fn with_namespace_fixture<T, F>(
+        &mut self,
+        environment: &ManagedEnvironment,
+        runner_role: &str,
+        fixture_sql: &str,
+        operation: F,
+    ) -> Result<T, QueryExecutionError>
+    where
+        F: FnOnce(&mut Self) -> Result<T, QueryExecutionError>,
+    {
+        if !is_safe_role_name(runner_role) {
+            return Err(QueryExecutionError::PolicyViolation);
+        }
+        validate_setup_sql_for_namespace(fixture_sql, Some(&environment.namespace))?;
+        if !self.managed_namespace_is_owned(environment)? {
+            return Err(QueryExecutionError::OwnershipVerificationFailed);
+        }
+        let runner_is_constrained = self
+            .client
+            .query_opt(
+                "SELECT NOT rolsuper AND NOT rolcreaterole AND NOT rolcreatedb
+                    AND NOT rolinherit AND NOT rolbypassrls AND NOT rolreplication
+                 FROM pg_catalog.pg_roles WHERE rolname = $1",
+                &[&runner_role],
+            )
+            .map_err(map_database_error)?
+            .is_some_and(|row| row.get::<_, bool>(0));
+        if !runner_is_constrained {
+            return Err(QueryExecutionError::PolicyViolation);
+        }
+        let schema = quote_identifier(&environment.namespace);
+        let runner = quote_identifier(runner_role);
+
+        self.client
+            .batch_execute("BEGIN")
+            .map_err(|_| QueryExecutionError::RuntimeError)?;
+        let result = (|| {
+            // Provisioning ran the pack schema as the runner, so the runner owns these tables.
+            self.client
+                .batch_execute(&format!(
+                    "SET LOCAL search_path TO {schema}, pg_catalog;
+                     SET LOCAL ROLE {runner}"
+                ))
+                .map_err(|_| QueryExecutionError::RuntimeError)?;
+            self.client
+                .batch_execute(fixture_sql)
+                .map_err(|_| QueryExecutionError::RuntimeError)?;
+            self.client
+                .batch_execute("SET LOCAL transaction_read_only = on")
+                .map_err(|_| QueryExecutionError::RuntimeError)?;
+            operation(self)
+        })();
+        let rollback = self.client.batch_execute("ROLLBACK");
+
+        if rollback.is_err() {
+            Err(QueryExecutionError::RuntimeError)
+        } else {
+            result
         }
     }
 

@@ -58,7 +58,7 @@ describe("connection profile drafts", () => {
     expect(["verify_full", "verify_ca", "require"].map((mode) => [tlsModeLabel(mode), tlsShortLabel(mode)])).toEqual([
       ["Verify certificate and host", "TLS verified"],
       ["Verify certificate authority", "TLS CA verified"],
-      ["Require TLS (no certificate check)", "TLS not verified"],
+      ["Require TLS (certificate verified)", "TLS required"],
     ])
   })
 })

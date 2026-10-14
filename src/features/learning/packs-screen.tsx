@@ -115,6 +115,7 @@ export function PacksScreen() {
                     index={index}
                     statuses={statuses}
                     environments={data.environments}
+                    onDeleted={() => void data.refreshAfterImport()}
                   />
                 ))}
               </div>

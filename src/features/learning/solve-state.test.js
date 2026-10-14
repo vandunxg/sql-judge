@@ -39,6 +39,16 @@ describe("problem environment", () => {
     expect(environmentForProblem([env("sj_other", "ready", { packDigest: "d2" })], problem)).toBeUndefined()
     expect(environmentForProblem([env("sj_ext", "ready", { mode: "external_explorer" })], problem)).toBeUndefined()
   })
+
+  test("prefers the pack sandbox that Run uses", async () => {
+    const { environmentForProblem, packSandboxEnvId } = await import("./solve-state")
+    const digest = "0123456789abcdef" + "f".repeat(48)
+    const problem = { packId: "hr", packVersion: "1.2.0", packDigest: digest }
+    const env = (envId, namespace, state) => ({ envId, instanceId: "i", packId: "hr", packVersion: "1.2.0", packDigest: digest, namespace, mode: "managed", state })
+    expect(packSandboxEnvId(digest)).toBe("pack-0123456789abcdef")
+    expect(environmentForProblem([env("mine", "sj_mine", "ready"), env("pack-0123456789abcdef", "sj_pack_0123456789abcdef", "ready")], problem)).toEqual({ namespace: "sj_pack_0123456789abcdef", ready: true })
+    expect(environmentForProblem([env("mine", "sj_mine", "ready"), env("pack-0123456789abcdef", "sj_pack_0123456789abcdef", "needs_recovery")], problem)).toEqual({ namespace: "sj_pack_0123456789abcdef", ready: false })
+  })
 })
 
 describe("sample column order", () => {

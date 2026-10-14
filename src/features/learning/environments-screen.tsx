@@ -145,10 +145,11 @@ export function EnvironmentsScreen() {
       {creating ? (
         <EnvironmentCreateDialog
           packs={state.packs}
+          profiles={state.profiles}
           busy={state.busy}
           returnFocus={openerRef}
           onCancel={() => setCreating(false)}
-          onCreate={state.createEnvironment}
+          onCreateExternal={state.createExternalEnvironment}
         />
       ) : null}
       {pendingAction && phase === "ready" ? (

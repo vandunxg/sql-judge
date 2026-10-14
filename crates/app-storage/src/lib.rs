@@ -1,10 +1,16 @@
-use environment_manager::{EnvironmentMode, EnvironmentRecord, EnvironmentState};
+use environment_manager::{
+    EnvironmentMode, EnvironmentRecord, EnvironmentState, ExternalSandboxTarget,
+};
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+
+mod packs;
+
+pub use packs::{PackInsert, PackProblemRecord, PackRecord, PackStore, PackTestRecord};
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -108,6 +114,8 @@ pub struct BackupEnvironment {
     pub namespace: String,
     pub ownership_nonce: String,
     pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_target: Option<ExternalSandboxTarget>,
     pub state: String,
 }
 
@@ -221,14 +229,14 @@ impl EnvironmentStore {
                  pack_digest TEXT NOT NULL DEFAULT '',
                  namespace TEXT NOT NULL UNIQUE,
                  ownership_nonce TEXT NOT NULL,
-                 mode TEXT NOT NULL CHECK (mode IN ('managed', 'external_explorer')),
+                 mode TEXT NOT NULL CHECK (mode IN ('managed', 'external_explorer', 'external_sandbox')),
                  state TEXT NOT NULL CHECK (state IN (
                      'provisioning', 'ready', 'running', 'rebuilding',
                      'deleting', 'needs_recovery', 'error'
                  ))
              );
-             CREATE INDEX IF NOT EXISTS idx_environment_pack ON environment_ledger(pack_id);
-             CREATE TABLE IF NOT EXISTS runtime_metadata (
+              CREATE INDEX IF NOT EXISTS idx_environment_pack ON environment_ledger(pack_id);
+              CREATE TABLE IF NOT EXISTS runtime_metadata (
                  metadata_key TEXT PRIMARY KEY NOT NULL,
                  metadata_value TEXT NOT NULL
              );
@@ -255,6 +263,14 @@ impl EnvironmentStore {
               );",
         )?;
         migrate_environment_identity_columns(&connection)?;
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS external_sandbox_targets (
+                 env_id TEXT PRIMARY KEY NOT NULL REFERENCES environment_ledger(env_id) ON DELETE CASCADE,
+                 profile_id TEXT NOT NULL,
+                 server_identity TEXT NOT NULL,
+                 database_identity TEXT NOT NULL
+             );",
+        )?;
         Ok(Self { connection })
     }
 
@@ -358,9 +374,93 @@ impl EnvironmentStore {
             ));
         }
         let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM external_sandbox_targets WHERE env_id = ?1",
+            [env_id],
+        )?;
         transaction.execute("DELETE FROM environment_ledger WHERE env_id = ?1", [env_id])?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn save_external_sandbox_target(
+        &mut self,
+        env_id: &str,
+        target: &ExternalSandboxTarget,
+    ) -> Result<(), StorageError> {
+        if !target.is_valid() {
+            return Err(StorageError::InvalidEnvironment("external sandbox target"));
+        }
+        let environment = self
+            .get_environment(env_id)?
+            .ok_or(StorageError::InvalidEnvironment(
+                "external sandbox environment",
+            ))?;
+        if environment.mode != EnvironmentMode::ExternalSandbox {
+            return Err(StorageError::InvalidEnvironment(
+                "external sandbox environment",
+            ));
+        }
+        let transaction = self.connection.transaction()?;
+        let existing = transaction
+            .query_row(
+                "SELECT profile_id, server_identity, database_identity
+                 FROM external_sandbox_targets WHERE env_id = ?1",
+                [env_id],
+                |row| {
+                    Ok(ExternalSandboxTarget {
+                        profile_id: row.get(0)?,
+                        server_identity: row.get(1)?,
+                        database_identity: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+        if existing.as_ref().is_some_and(|current| current != target) {
+            return Err(StorageError::InvalidEnvironment(
+                "external sandbox target is immutable",
+            ));
+        }
+        if existing.is_none() {
+            transaction.execute(
+                "INSERT INTO external_sandbox_targets (
+                     env_id, profile_id, server_identity, database_identity
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    env_id,
+                    target.profile_id,
+                    target.server_identity,
+                    target.database_identity,
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn get_external_sandbox_target(
+        &self,
+        env_id: &str,
+    ) -> Result<Option<ExternalSandboxTarget>, StorageError> {
+        let target = self
+            .connection
+            .query_row(
+                "SELECT profile_id, server_identity, database_identity
+                 FROM external_sandbox_targets WHERE env_id = ?1",
+                [env_id],
+                |row| {
+                    Ok(ExternalSandboxTarget {
+                        profile_id: row.get(0)?,
+                        server_identity: row.get(1)?,
+                        database_identity: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+        if target.as_ref().is_some_and(|target| !target.is_valid()) {
+            return Err(StorageError::InvalidEnvironment("external sandbox target"));
+        }
+        Ok(target)
     }
 
     pub fn list_environments(&self) -> Result<Vec<EnvironmentRecord>, StorageError> {
@@ -571,6 +671,18 @@ impl EnvironmentStore {
         if profile_id.trim().is_empty() {
             return Err(StorageError::InvalidConnectionProfile("profile id"));
         }
+        let is_bound = self.connection.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM external_sandbox_targets WHERE profile_id = ?1
+             )",
+            [profile_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if is_bound {
+            return Err(StorageError::InvalidConnectionProfile(
+                "profile is bound to an external sandbox",
+            ));
+        }
         self.connection.execute(
             "DELETE FROM connection_profiles WHERE profile_id = ?1",
             [profile_id],
@@ -747,6 +859,7 @@ fn environment_mode_name(mode: EnvironmentMode) -> &'static str {
     match mode {
         EnvironmentMode::Managed => "managed",
         EnvironmentMode::ExternalExplorer => "external_explorer",
+        EnvironmentMode::ExternalSandbox => "external_sandbox",
     }
 }
 
@@ -788,6 +901,7 @@ fn decode_environment(
     let mode = match mode.as_str() {
         "managed" => EnvironmentMode::Managed,
         "external_explorer" => EnvironmentMode::ExternalExplorer,
+        "external_sandbox" => EnvironmentMode::ExternalSandbox,
         _ => return Err(StorageError::InvalidEnvironment("unknown environment mode")),
     };
     let state = match state.as_str() {
@@ -837,6 +951,38 @@ fn migrate_environment_identity_columns(connection: &Connection) -> Result<(), S
         connection.execute(
             "ALTER TABLE environment_ledger ADD COLUMN pack_digest TEXT NOT NULL DEFAULT ''",
             [],
+        )?;
+    }
+    let schema: String = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'environment_ledger'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !schema.contains("external_sandbox") {
+        connection.execute_batch(
+            "ALTER TABLE environment_ledger RENAME TO environment_ledger_legacy;
+             CREATE TABLE environment_ledger (
+                 env_id TEXT PRIMARY KEY NOT NULL,
+                 instance_id TEXT NOT NULL,
+                 pack_id TEXT NOT NULL,
+                 pack_version TEXT NOT NULL DEFAULT '',
+                 pack_digest TEXT NOT NULL DEFAULT '',
+                 namespace TEXT NOT NULL UNIQUE,
+                 ownership_nonce TEXT NOT NULL,
+                 mode TEXT NOT NULL CHECK (mode IN ('managed', 'external_explorer', 'external_sandbox')),
+                 state TEXT NOT NULL CHECK (state IN (
+                     'provisioning', 'ready', 'running', 'rebuilding',
+                     'deleting', 'needs_recovery', 'error'
+                 ))
+             );
+             INSERT INTO environment_ledger (
+                 env_id, instance_id, pack_id, pack_version, pack_digest, namespace,
+                 ownership_nonce, mode, state
+             ) SELECT env_id, instance_id, pack_id, pack_version, pack_digest, namespace,
+                      ownership_nonce, mode, state
+               FROM environment_ledger_legacy;
+             DROP TABLE environment_ledger_legacy;
+             CREATE INDEX IF NOT EXISTS idx_environment_pack ON environment_ledger(pack_id);",
         )?;
     }
     Ok(())
@@ -1015,6 +1161,13 @@ pub fn export_backup(path: impl AsRef<Path>) -> Result<BackupSnapshot, StorageEr
     let mut first_environment = true;
     environments_store.for_each_environment(|environment| {
         validate_backup_environment_state(&environment)?;
+        let external_target = match environment.mode {
+            EnvironmentMode::ExternalSandbox => environments_store
+                .get_external_sandbox_target(&environment.env_id)?
+                .ok_or(StorageError::InvalidEnvironment("external sandbox target"))
+                .map(Some)?,
+            EnvironmentMode::Managed | EnvironmentMode::ExternalExplorer => None,
+        };
         let backup = BackupEnvironment {
             env_id: environment.env_id,
             instance_id: environment.instance_id,
@@ -1024,6 +1177,7 @@ pub fn export_backup(path: impl AsRef<Path>) -> Result<BackupSnapshot, StorageEr
             namespace: environment.namespace,
             ownership_nonce: environment.ownership_nonce,
             mode: environment_mode_name(environment.mode).to_owned(),
+            external_target,
             state: environment_state_name(environment.state).to_owned(),
         };
         if !first_environment {
@@ -1140,6 +1294,16 @@ pub fn restore_backup(
         ))?;
         validate_environment(&record)?;
         validate_backup_environment_state(&record)?;
+        match (record.mode, backup.external_target.as_ref()) {
+            (EnvironmentMode::ExternalSandbox, Some(target)) if target.is_valid() => {}
+            (EnvironmentMode::ExternalSandbox, _) => {
+                return Err(StorageError::InvalidEnvironment("external sandbox target"));
+            }
+            (_, Some(_)) => {
+                return Err(StorageError::InvalidEnvironment("external sandbox target"));
+            }
+            (_, None) => {}
+        }
         if !environment_ids.insert(record.env_id.clone())
             || !namespaces.insert(record.namespace.clone())
         {

@@ -12,6 +12,7 @@ export function PacksInstalledSummary({ result, pack }: { result: PackImportResu
         ] as Array<[string, string, boolean]>)
       : []),
     ["Content hash", shortDigest(result.digest), true],
+    ["Practice sandbox", result.sandbox === "ready" ? "Ready" : "Created on first Run", false],
   ]
   return (
     <dl className="m-0 grid grid-cols-[repeat(auto-fit,minmax(min(150px,100%),1fr))] gap-4 border-t pt-4">

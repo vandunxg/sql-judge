@@ -3,7 +3,9 @@ use app_storage::{
     RecoveryRecord, StorageError, SubmissionRecord, SubmissionSummary, TestRecord, export_backup,
     restore_backup,
 };
-use environment_manager::{EnvironmentMode, EnvironmentRecord, EnvironmentState};
+use environment_manager::{
+    EnvironmentMode, EnvironmentRecord, EnvironmentState, ExternalSandboxTarget,
+};
 use rusqlite::Connection;
 
 fn record(id: &str) -> SubmissionRecord {
@@ -99,6 +101,59 @@ fn environment(id: &str, state: EnvironmentState) -> EnvironmentRecord {
     }
 }
 
+#[test]
+fn external_sandbox_target_round_trips_through_ledger_and_backup_without_credentials() {
+    let path = temp_database("external-sandbox-target");
+    let sandbox = EnvironmentRecord {
+        env_id: "external-sandbox".to_owned(),
+        instance_id: "external-instance".to_owned(),
+        pack_id: "hr-sql-101".to_owned(),
+        pack_version: "1.0.0".to_owned(),
+        pack_digest: "a".repeat(64),
+        namespace: "sj_external_sandbox".to_owned(),
+        ownership_nonce: "external-nonce".to_owned(),
+        mode: EnvironmentMode::ExternalSandbox,
+        state: EnvironmentState::Ready,
+    };
+    let target = ExternalSandboxTarget {
+        profile_id: "profile-training".to_owned(),
+        server_identity: "postgresql://db.example.test:5432".to_owned(),
+        database_identity: "training".to_owned(),
+    };
+
+    let mut environments = EnvironmentStore::open(&path).expect("open environments");
+    environments
+        .save_environment(&sandbox)
+        .expect("save external sandbox");
+    environments
+        .save_external_sandbox_target("external-sandbox", &target)
+        .expect("save external target");
+    drop(environments);
+    let restored = EnvironmentStore::open(&path)
+        .expect("reopen environments")
+        .get_environment("external-sandbox")
+        .expect("load sandbox")
+        .expect("sandbox exists");
+    assert_eq!(restored, sandbox);
+    assert_eq!(
+        EnvironmentStore::open(&path)
+            .expect("reopen target store")
+            .get_external_sandbox_target("external-sandbox")
+            .expect("load sandbox target"),
+        Some(target.clone())
+    );
+
+    let snapshot = export_backup(&path).expect("export backup");
+    let encoded = serde_json::to_string(&snapshot).expect("encode backup");
+    assert!(encoded.contains("profile-training"));
+    assert!(!encoded.contains("password"));
+    assert_eq!(
+        snapshot.environments[0].external_target.as_ref(),
+        Some(&target)
+    );
+    let _ = std::fs::remove_file(path);
+}
+
 fn connection_profile(id: &str) -> ConnectionProfile {
     ConnectionProfile {
         profile_id: id.to_owned(),
@@ -146,6 +201,37 @@ fn environment_identity_columns_migrate_existing_metadata() {
     assert!(legacy.pack_version.is_empty());
     assert!(legacy.pack_digest.is_empty());
     drop(environments);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn environment_migration_keeps_external_target_foreign_key_on_current_ledger() {
+    let path = temp_database("external-sandbox-migration");
+    Connection::open(&path)
+        .expect("open legacy database")
+        .execute_batch(
+            "CREATE TABLE environment_ledger (
+                 env_id TEXT PRIMARY KEY NOT NULL,
+                 instance_id TEXT NOT NULL,
+                 pack_id TEXT NOT NULL,
+                 namespace TEXT NOT NULL UNIQUE,
+                 ownership_nonce TEXT NOT NULL,
+                 mode TEXT NOT NULL,
+                 state TEXT NOT NULL
+             );",
+        )
+        .expect("create legacy ledger");
+
+    drop(EnvironmentStore::open(&path).expect("migrate environment store"));
+    let connection = Connection::open(&path).expect("open migrated database");
+    let foreign_table: String = connection
+        .query_row(
+            "SELECT \"table\" FROM pragma_foreign_key_list('external_sandbox_targets')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("external target foreign key");
+    assert_eq!(foreign_table, "environment_ledger");
     let _ = std::fs::remove_file(path);
 }
 

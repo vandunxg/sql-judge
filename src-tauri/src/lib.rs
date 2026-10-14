@@ -1,24 +1,30 @@
 use app_storage::{
     BackupSnapshot, ConnectionProfile, EnvironmentStore, HistoryStore, MAX_BACKUP_BYTES,
-    RecoveryOperation, RecoveryRecord, SubmissionRecord, TestRecord,
-    export_backup as export_metadata_backup, restore_backup as restore_metadata_backup,
+    PackInsert, PackRecord, PackStore, RecoveryOperation, RecoveryRecord, SubmissionRecord,
+    TestRecord, export_backup as export_metadata_backup, restore_backup as restore_metadata_backup,
 };
 use environment_manager::{
     DestructiveAction, EnvironmentLedger, EnvironmentMode, EnvironmentRecord, EnvironmentState,
+    ExternalSandboxTarget, authorize_external_sandbox_action,
 };
 use judge_core::{Dialect, QueryLimits, QueryResult, SqlValue, Verdict};
 use judge_postgres::{
     CancellationToken, ExternalConnectionInfo, ExternalMetadata, ExternalPostgresConfig,
-    ExternalPostgresError, ExternalPostgresExplorer, ExternalTable, ExternalTlsMode, JudgeCase,
-    ManagedEnvironment, ManagedPostgresRuntime, ManagedPostgresSession, PostgresSession,
-    QueryExecutionError, judge_submission_with_watchdog_token,
+    ExternalPostgresError, ExternalPostgresExplorer, ExternalPostgresSandbox,
+    ExternalSandboxConfig, ExternalTable, ExternalTlsMode, JudgeCase, ManagedEnvironment,
+    ManagedPostgresRuntime, ManagedPostgresSession, PostgresSession, QueryExecutionError,
+    judge_submission_in_namespace_with_watchdog_token, judge_submission_with_watchdog_token,
 };
 use judge_sqlserver::{
     SqlServerConfig, SqlServerConnectionInfo, SqlServerError, SqlServerExplorer, SqlServerTlsMode,
 };
 use keyring::Entry;
-use problem_pack::{PackData, PackError, PackImporter, ValidatedProblem};
+use problem_pack::{
+    PackData, PackError, PackImporter, ValidatedProblem, catalog_from_records, pack_records,
+    problem_from_record, validate_pack_runtime, version_cmp,
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -210,6 +216,8 @@ struct PackImportResult {
     version: String,
     digest: String,
     message: String,
+    /// `ready` when the pack sandbox is provisioned; `pending` when the first Run creates it.
+    sandbox: String,
 }
 
 static CANCELLATIONS: OnceLock<Mutex<HashMap<String, CancellationToken>>> = OnceLock::new();
@@ -296,6 +304,7 @@ struct ManagedEnvironmentState {
     database_path: PathBuf,
     store: EnvironmentStore,
     history: HistoryStore,
+    packs: PackStore,
     ledger: EnvironmentLedger,
     runtime_root: PathBuf,
     runtime_instance_id: String,
@@ -334,6 +343,15 @@ struct ResetEnvironmentRequest {
     env_id: String,
     instance_id: String,
     namespace: String,
+    confirmed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeletePackRequest {
+    pack_id: String,
+    version: String,
+    digest: String,
     confirmed: bool,
 }
 
@@ -378,6 +396,41 @@ struct ConnectionProfileSummary {
 #[serde(rename_all = "camelCase")]
 struct ExternalProfileRequest {
     profile_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateExternalSandboxRequest {
+    env_id: String,
+    profile_id: String,
+    pack_id: String,
+    pack_version: String,
+    pack_digest: String,
+    confirmed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteExternalSandboxRequest {
+    env_id: String,
+    confirmed: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ExternalSandboxProfileSummary {
+    profile_id: String,
+    display_name: String,
+    database: String,
+    username: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ExternalSandboxProbeResponse {
+    database: String,
+    database_oid: u32,
+    system_identifier: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -541,19 +594,79 @@ fn load_environment_state(path: &Path) -> Result<ManagedEnvironmentState, String
     }
     let ledger = EnvironmentLedger::restore(records)
         .map_err(|_| "Managed environment state failed policy validation.".to_owned())?;
-    let runtime_root = path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("postgres-runtime");
+    let mut packs = PackStore::open(path)
+        .map_err(|_| "Installed pack catalog could not be opened.".to_owned())?;
+    let data_root = path.parent().unwrap_or_else(|| Path::new("."));
+    migrate_legacy_pack_registry(&mut packs, &data_root.join("packs"));
+    let runtime_root = data_root.join("postgres-runtime");
     Ok(ManagedEnvironmentState {
         database_path: path.to_owned(),
         store,
         history,
+        packs,
         ledger,
         runtime_root,
         runtime_instance_id,
         runtime: None,
     })
+}
+
+/// ADR-025: copies packs published by older builds into SQLite. The registry is removed only
+/// once every pack migrated; a failing pack keeps it so the next start can retry.
+fn migrate_legacy_pack_registry(packs: &mut PackStore, registry: &Path) {
+    let published = match PackImporter::new(registry).load_published() {
+        Ok(published) => published,
+        Err(_) => {
+            log::warn!("legacy pack registry could not be scanned");
+            return;
+        }
+    };
+    let mut complete = true;
+    for (digest, pack) in published {
+        let migrated = pack
+            .and_then(|pack| pack_records(&pack))
+            .ok()
+            .and_then(|(record, problems)| packs.insert_pack(&record, &problems).ok());
+        if !matches!(
+            migrated,
+            Some(PackInsert::Inserted | PackInsert::AlreadyInstalled)
+        ) {
+            complete = false;
+            log::warn!("legacy pack {digest} could not be migrated");
+        }
+    }
+    if complete && registry.exists() && std::fs::remove_dir_all(registry).is_err() {
+        log::warn!("migrated legacy pack registry could not be removed");
+    }
+}
+
+fn installed_pack_exact(
+    state: &ManagedEnvironmentState,
+    pack_id: &str,
+    version: &str,
+    digest: &str,
+) -> Result<Option<PackRecord>, String> {
+    let pack = state
+        .packs
+        .find_pack(digest)
+        .map_err(|_| "Installed pack catalog could not be read.".to_owned())?;
+    Ok(pack.filter(|pack| pack.pack_id == pack_id && pack.version == version))
+}
+
+fn installed_problem(
+    state: &ManagedEnvironmentState,
+    pack: &PackRecord,
+    problem_id: &str,
+) -> Result<Option<ValidatedProblem>, String> {
+    state
+        .packs
+        .find_problem(&pack.digest, problem_id)
+        .map_err(|_| "Installed pack catalog could not be read.".to_owned())?
+        .map(|record| {
+            problem_from_record(pack, &record)
+                .map_err(|_| "Installed problem could not be loaded.".to_owned())
+        })
+        .transpose()
 }
 
 fn load_environment_state_for_startup(path: &Path) -> Result<ManagedEnvironmentState, String> {
@@ -849,7 +962,7 @@ fn ownership_nonce(kind: &str, env_id: &str) -> String {
 
 fn environment_summary(record: &EnvironmentRecord) -> Result<ManagedEnvironmentSummary, String> {
     managed_environment_summary(record)
-        .ok_or_else(|| "Only managed environments can be returned by this command.".to_owned())
+        .ok_or_else(|| "The environment could not be returned by this command.".to_owned())
 }
 
 fn provision_record(
@@ -941,37 +1054,29 @@ fn managed_pack_identity(
     state: &ManagedEnvironmentState,
     pack_id: &str,
 ) -> Result<(String, String), String> {
-    let registry = state
-        .runtime_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("packs");
-    let pack = PackImporter::new(registry)
-        .load_validated(pack_id)
+    let pack = state
+        .packs
+        .list_packs()
         .map_err(|_| "Managed pack registry validation failed.".to_owned())?
+        .into_iter()
+        .filter(|pack| pack.pack_id == pack_id)
+        .max_by(|left, right| version_cmp(&left.version, &right.version))
         .ok_or_else(|| "The requested managed pack is not installed.".to_owned())?;
-    Ok((pack.version().to_owned(), pack.digest().to_owned()))
+    Ok((pack.version, pack.digest))
 }
 
 fn managed_pack_schema(
     state: &ManagedEnvironmentState,
     environment: &EnvironmentRecord,
 ) -> Result<String, String> {
-    let registry = state
-        .runtime_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("packs");
-    let pack = PackImporter::new(registry)
-        .load_validated_exact(
-            &environment.pack_id,
-            &environment.pack_version,
-            &environment.pack_digest,
-        )
-        .map_err(|_| "Managed pack registry validation failed.".to_owned())?
-        .ok_or_else(|| "The exact managed pack is not installed.".to_owned())?;
-    pack.schema_sql()
-        .map_err(|_| "Managed pack schema could not be loaded.".to_owned())
+    installed_pack_exact(
+        state,
+        &environment.pack_id,
+        &environment.pack_version,
+        &environment.pack_digest,
+    )?
+    .map(|pack| pack.schema_sql)
+    .ok_or_else(|| "The exact managed pack is not installed.".to_owned())
 }
 
 fn import_pack_value(
@@ -989,38 +1094,100 @@ fn import_pack_value(
     let mut state = state
         .lock()
         .map_err(|_| "Managed environment state is busy.".to_owned())?;
-    ensure_managed_runtime(&mut state)?;
-    let connection = state
-        .runtime
-        .as_ref()
-        .ok_or_else(|| "Managed PostgreSQL runtime is unavailable.".to_owned())?
-        .connection_string();
-    let mut session = ManagedPostgresSession::connect(&connection, &state.runtime_instance_id)
-        .map_err(|_| "Managed PostgreSQL runtime ownership could not be verified.")?;
-    let registry = state
-        .runtime_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("packs");
-    let published = PackImporter::new(registry)
-        .import(&pack, &mut session, "sqljudge_runner")
-        .map_err(|error| match error {
-            PackError::RuntimeValidation { problem, test } => {
-                format!("Pack runtime validation failed for {problem}/{test}.")
-            }
-            _ => "Pack runtime validation or publication failed.".to_owned(),
-        })?;
+    let already_installed = state
+        .packs
+        .find_pack(pack.digest())
+        .map_err(|_| "Pack runtime validation or publication failed.".to_owned())?
+        .is_some();
+    if !already_installed {
+        ensure_managed_runtime(&mut state)?;
+        let connection = state
+            .runtime
+            .as_ref()
+            .ok_or_else(|| "Managed PostgreSQL runtime is unavailable.".to_owned())?
+            .connection_string();
+        let mut session = ManagedPostgresSession::connect(&connection, &state.runtime_instance_id)
+            .map_err(|_| "Managed PostgreSQL runtime ownership could not be verified.")?;
+        validate_pack_runtime(&pack, &mut session, "sqljudge_runner").map_err(
+            |error| match error {
+                PackError::RuntimeValidation { problem, test } => {
+                    format!("Pack runtime validation failed for {problem}/{test}.")
+                }
+                _ => "Pack runtime validation or publication failed.".to_owned(),
+            },
+        )?;
+    }
+    let (record, problems) = pack_records(&pack)
+        .map_err(|_| "Pack runtime validation or publication failed.".to_owned())?;
+    let inserted = state
+        .packs
+        .insert_pack(&record, &problems)
+        .map_err(|_| "Pack runtime validation or publication failed.".to_owned())?;
+    let status = match inserted {
+        PackInsert::Inserted => "published",
+        PackInsert::AlreadyInstalled => "already_installed",
+        PackInsert::VersionConflict => {
+            return Err("Another pack is already installed with this ID and version.".to_owned());
+        }
+    };
+    // ADR-026: a sandbox failure never fails the import; the first Run retries it.
+    let sandbox = match ensure_managed_runtime(&mut state)
+        .and_then(|_| ensure_pack_sandbox(&mut state, &record))
+    {
+        Ok(_) => "ready",
+        Err(_) => {
+            log::warn!("pack sandbox for {} is pending", record.digest);
+            "pending"
+        }
+    };
     Ok(PackImportResult {
-        status: if published.already_installed {
-            "already_installed".to_owned()
-        } else {
-            "published".to_owned()
-        },
+        status: status.to_owned(),
         pack_id: pack.id().to_owned(),
         version: pack.version().to_owned(),
         digest: pack.digest().to_owned(),
         message: "Pack validated and published for managed use.".to_owned(),
+        sandbox: sandbox.to_owned(),
     })
+}
+
+/// ADR-026: one sandbox per installed pack version, named from its digest.
+fn pack_sandbox_identity(digest: &str) -> (String, String) {
+    let short = &digest[..digest.len().min(16)];
+    (format!("pack-{short}"), format!("sj_pack_{short}"))
+}
+
+/// Returns the pack's ready sandbox, provisioning it when missing. The caller holds the state
+/// lock and has started the runtime. A sandbox that exists but is not ready is never reset or
+/// recovered here; the user does that from Environments.
+fn ensure_pack_sandbox(
+    state: &mut ManagedEnvironmentState,
+    pack: &PackRecord,
+) -> Result<EnvironmentRecord, String> {
+    let (env_id, namespace) = pack_sandbox_identity(&pack.digest);
+    if let Ok(existing) = state.ledger.inspect(&env_id) {
+        return if existing.state == EnvironmentState::Ready {
+            Ok(existing.clone())
+        } else {
+            Err("The pack sandbox is not ready. Recover or delete it from Environments.".to_owned())
+        };
+    }
+    let record = EnvironmentRecord {
+        env_id: env_id.clone(),
+        instance_id: state.runtime_instance_id.clone(),
+        pack_id: pack.pack_id.clone(),
+        pack_version: pack.version.clone(),
+        pack_digest: pack.digest.clone(),
+        namespace,
+        ownership_nonce: ownership_nonce("sandbox", &env_id),
+        mode: EnvironmentMode::Managed,
+        state: EnvironmentState::Provisioning,
+    };
+    provision_record(state, record)?;
+    state
+        .ledger
+        .inspect(&env_id)
+        .cloned()
+        .map_err(|_| "The pack sandbox could not be read after provisioning.".to_owned())
 }
 
 fn list_installed_packs_value(
@@ -1029,14 +1196,23 @@ fn list_installed_packs_value(
     let state = state
         .lock()
         .map_err(|_| "Managed environment state is busy.".to_owned())?;
-    let registry = state
-        .runtime_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("packs");
-    PackImporter::new(registry)
-        .list_catalog()
-        .map_err(|_| "Installed pack catalog validation failed.".to_owned())
+    let failed = |_| "Installed pack catalog validation failed.".to_owned();
+    let packs = state.packs.list_packs().map_err(failed)?;
+    let mut problems = HashMap::<String, Vec<String>>::new();
+    for (digest, catalog_json) in state.packs.list_problem_catalog().map_err(failed)? {
+        problems.entry(digest).or_default().push(catalog_json);
+    }
+    packs
+        .iter()
+        .map(|pack| {
+            let entries = problems
+                .get(&pack.digest)
+                .map(|entries| entries.iter().map(String::as_str).collect::<Vec<_>>())
+                .unwrap_or_default();
+            catalog_from_records(pack, &entries)
+                .map_err(|_| "Installed pack catalog validation failed.".to_owned())
+        })
+        .collect()
 }
 
 fn export_backup_value(state: &Mutex<ManagedEnvironmentState>) -> Result<BackupSnapshot, String> {
@@ -1082,24 +1258,18 @@ fn validate_backup_pack_registry(
     snapshot: &BackupSnapshot,
     state: &ManagedEnvironmentState,
 ) -> Result<(), String> {
-    let registry = state
-        .runtime_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("packs");
-    let importer = PackImporter::new(registry);
     for environment in snapshot
         .environments
         .iter()
         .filter(|environment| environment.mode == "managed")
     {
-        let installed = importer
-            .load_validated_exact(
-                &environment.pack_id,
-                &environment.pack_version,
-                &environment.pack_digest,
-            )
-            .map_err(|_| "Metadata backup pack validation failed.".to_owned())?;
+        let installed = installed_pack_exact(
+            state,
+            &environment.pack_id,
+            &environment.pack_version,
+            &environment.pack_digest,
+        )
+        .map_err(|_| "Metadata backup pack validation failed.".to_owned())?;
         if installed.is_none() {
             return Err("Metadata backup references a pack that is not imported.".to_owned());
         }
@@ -1243,6 +1413,22 @@ fn delete_connection_profile_value<V: SecretVault>(
         .store
         .get_connection_profile(profile_id)
         .map_err(|_| "Connection profile could not be read.".to_owned())?;
+    let bound = state
+        .store
+        .list_environments()
+        .map_err(|_| "Connection profile bindings could not be read.".to_owned())?
+        .into_iter()
+        .filter(|environment| environment.mode == EnvironmentMode::ExternalSandbox)
+        .try_fold(false, |bound, environment| {
+            state
+                .store
+                .get_external_sandbox_target(&environment.env_id)
+                .map(|target| bound || target.is_some_and(|target| target.profile_id == profile_id))
+        })
+        .map_err(|_| "Connection profile bindings could not be read.".to_owned())?;
+    if bound {
+        return Err("Connection profile is still bound to an external sandbox.".to_owned());
+    }
     if let Some(profile) = profile
         && let Some(secret_ref) = profile.secret_ref.as_deref()
     {
@@ -1254,6 +1440,64 @@ fn delete_connection_profile_value<V: SecretVault>(
         .store
         .delete_connection_profile(profile_id)
         .map_err(|_| "Connection profile could not be deleted.".to_owned())
+}
+
+fn list_external_sandbox_profiles_value<V: SecretVault>(
+    state: &Mutex<ManagedEnvironmentState>,
+    vault: &V,
+) -> Result<Vec<ExternalSandboxProfileSummary>, ExternalCommandError> {
+    let profiles = state
+        .lock()
+        .map_err(|_| {
+            external_error(
+                "external_database_error",
+                "Managed environment state is busy.",
+            )
+        })?
+        .store
+        .list_connection_profiles()
+        .map_err(|_| external_error("profile_invalid", "Connection profiles could not be read."))?;
+    let mut eligible = Vec::new();
+    for profile in profiles {
+        if profile.engine != "postgresql" {
+            continue;
+        }
+        let Some(secret_ref) = profile.secret_ref.as_deref() else {
+            continue;
+        };
+        let has_secret = vault
+            .get_secret(secret_ref)
+            .map_err(|_| {
+                external_error("secret_unavailable", "The credential vault is unavailable.")
+            })?
+            .is_some();
+        if has_secret {
+            eligible.push(ExternalSandboxProfileSummary {
+                profile_id: profile.profile_id,
+                display_name: profile.display_name,
+                database: profile.database,
+                username: profile.username,
+            });
+        }
+    }
+    Ok(eligible)
+}
+
+fn external_error(code: &str, message: &str) -> ExternalCommandError {
+    ExternalCommandError {
+        code: code.to_owned(),
+        message: message.to_owned(),
+    }
+}
+
+fn external_sandbox_namespace(env_id: &str) -> String {
+    let digest = Sha256::digest(env_id.as_bytes());
+    let suffix = digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sj_external_{suffix}")
 }
 
 fn external_profile_config_value<V: SecretVault>(
@@ -1425,11 +1669,284 @@ fn map_external_error(error: ExternalPostgresError) -> ExternalCommandError {
             "external_database_error",
             "The external PostgreSQL operation failed.",
         ),
+        ExternalPostgresError::OwnershipVerificationFailed => (
+            "ownership_verification_failed",
+            "The external sandbox ownership check failed.",
+        ),
     };
     ExternalCommandError {
         code: code.to_owned(),
         message: message.to_owned(),
     }
+}
+
+fn external_sandbox_target_identity(sandbox: &ExternalPostgresSandbox) -> ExternalSandboxTarget {
+    let target = sandbox.target_identity();
+    ExternalSandboxTarget {
+        profile_id: String::new(),
+        server_identity: target.system_identifier.clone(),
+        database_identity: format!("{}:{}", target.database, target.database_oid),
+    }
+}
+
+fn external_sandbox_delete_preflight(
+    state: &ManagedEnvironmentState,
+    request: &DeleteExternalSandboxRequest,
+) -> Result<(EnvironmentRecord, ExternalSandboxTarget), ExternalCommandError> {
+    if request.env_id.trim().is_empty() {
+        return Err(external_error(
+            "sandbox_invalid",
+            "The external sandbox identity is invalid.",
+        ));
+    }
+    let record = state
+        .ledger
+        .inspect(&request.env_id)
+        .map_err(|_| external_error("sandbox_not_found", "The external sandbox was not found."))?
+        .clone();
+    let target = state
+        .store
+        .get_external_sandbox_target(&request.env_id)
+        .map_err(|_| {
+            external_error(
+                "sandbox_unbound",
+                "The external sandbox binding is invalid.",
+            )
+        })?
+        .ok_or_else(|| external_error("sandbox_unbound", "The external sandbox is not bound."))?;
+    if record.mode != EnvironmentMode::ExternalSandbox
+        || record.instance_id != target.server_identity
+    {
+        return Err(external_error(
+            "target_mismatch",
+            "The external sandbox target does not match its durable binding.",
+        ));
+    }
+    authorize_external_sandbox_action(
+        &record,
+        Some(&target),
+        DestructiveAction::Delete {
+            env_id: request.env_id.clone(),
+            instance_id: record.instance_id.clone(),
+            ownership_nonce: record.ownership_nonce.clone(),
+            confirmed: request.confirmed,
+        },
+    )
+    .map_err(|_| {
+        external_error(
+            "sandbox_delete_rejected",
+            "The external sandbox delete request was rejected.",
+        )
+    })?;
+    Ok((record, target))
+}
+
+fn create_external_sandbox_value<V: SecretVault>(
+    request: CreateExternalSandboxRequest,
+    state: &Mutex<ManagedEnvironmentState>,
+    vault: &V,
+) -> Result<ManagedEnvironmentSummary, ExternalCommandError> {
+    if !request.confirmed {
+        return Err(external_error(
+            "confirmation_required",
+            "Creating an external sandbox requires explicit confirmation.",
+        ));
+    }
+    let namespace = external_sandbox_namespace(&request.env_id);
+    {
+        let state = state.lock().map_err(|_| {
+            external_error(
+                "external_database_error",
+                "Managed environment state is busy.",
+            )
+        })?;
+        if installed_pack_exact(
+            &state,
+            &request.pack_id,
+            &request.pack_version,
+            &request.pack_digest,
+        )
+        .map_err(|_| external_error("pack_invalid", "The exact pack could not be read."))?
+        .is_none()
+        {
+            return Err(external_error(
+                "pack_invalid",
+                "The exact pack is not installed.",
+            ));
+        }
+        if state.ledger.inspect(&request.env_id).is_ok() {
+            return Err(external_error(
+                "sandbox_exists",
+                "The external sandbox already exists.",
+            ));
+        }
+    }
+    let connection = external_profile_config_value(&request.profile_id, state, vault)?;
+    let nonce = ownership_nonce("external", &request.env_id);
+    let config = ExternalSandboxConfig::new(
+        connection,
+        &request.profile_id,
+        &request.env_id,
+        &namespace,
+        &nonce,
+    )
+    .map_err(map_external_error)?;
+    let mut sandbox = ExternalPostgresSandbox::connect(config).map_err(map_external_error)?;
+    let mut target = external_sandbox_target_identity(&sandbox);
+    target.profile_id = request.profile_id.clone();
+    let record = EnvironmentRecord {
+        env_id: request.env_id,
+        instance_id: target.server_identity.clone(),
+        pack_id: request.pack_id,
+        pack_version: request.pack_version,
+        pack_digest: request.pack_digest,
+        namespace,
+        ownership_nonce: nonce,
+        mode: EnvironmentMode::ExternalSandbox,
+        state: EnvironmentState::Provisioning,
+    };
+    {
+        let mut state = state.lock().map_err(|_| {
+            external_error(
+                "external_database_error",
+                "Managed environment state is busy.",
+            )
+        })?;
+        state.ledger.create(record.clone()).map_err(|_| {
+            external_error("sandbox_exists", "The external sandbox already exists.")
+        })?;
+        state.store.save_environment(&record).map_err(|_| {
+            external_error("storage_failed", "The external sandbox could not be saved.")
+        })?;
+        state
+            .store
+            .save_external_sandbox_target(&record.env_id, &target)
+            .map_err(|_| {
+                external_error(
+                    "storage_failed",
+                    "The external sandbox binding could not be saved.",
+                )
+            })?;
+    }
+    // This phase provisions only the generated schema and ownership marker; pack SQL stays local.
+    if let Err(error) = sandbox.provision() {
+        let mut state = state.lock().map_err(|_| {
+            external_error(
+                "external_database_error",
+                "Managed environment state is busy.",
+            )
+        })?;
+        let _ = state.ledger.mark_error(&record.env_id);
+        if let Ok(error_record) = state.ledger.inspect(&record.env_id).cloned() {
+            let _ = state.store.save_environment(&error_record);
+        }
+        return Err(map_external_error(error));
+    }
+    let mut state = state.lock().map_err(|_| {
+        external_error(
+            "external_database_error",
+            "Managed environment state is busy.",
+        )
+    })?;
+    state.ledger.mark_ready(&record.env_id).map_err(|_| {
+        external_error(
+            "storage_failed",
+            "The external sandbox state could not be saved.",
+        )
+    })?;
+    let ready = state
+        .ledger
+        .inspect(&record.env_id)
+        .map_err(|_| {
+            external_error(
+                "storage_failed",
+                "The external sandbox state could not be read.",
+            )
+        })?
+        .clone();
+    state.store.save_environment(&ready).map_err(|_| {
+        external_error(
+            "storage_failed",
+            "The external sandbox state could not be saved.",
+        )
+    })?;
+    environment_summary(&ready).map_err(|_| {
+        external_error(
+            "storage_failed",
+            "The external sandbox response could not be created.",
+        )
+    })
+}
+
+fn delete_external_sandbox_value<V: SecretVault>(
+    request: DeleteExternalSandboxRequest,
+    state: &Mutex<ManagedEnvironmentState>,
+    vault: &V,
+) -> Result<(), ExternalCommandError> {
+    let (record, target) = {
+        let state = state.lock().map_err(|_| {
+            external_error(
+                "external_database_error",
+                "Managed environment state is busy.",
+            )
+        })?;
+        external_sandbox_delete_preflight(&state, &request)?
+    };
+    let connection = external_profile_config_value(&target.profile_id, state, vault)?;
+    let config = ExternalSandboxConfig::new(
+        connection,
+        &target.profile_id,
+        &record.env_id,
+        &record.namespace,
+        &record.ownership_nonce,
+    )
+    .map_err(map_external_error)?;
+    let mut sandbox = ExternalPostgresSandbox::connect(config).map_err(map_external_error)?;
+    let observed = external_sandbox_target_identity(&sandbox);
+    if observed.server_identity != target.server_identity
+        || observed.database_identity != target.database_identity
+    {
+        return Err(external_error(
+            "target_mismatch",
+            "The external server no longer matches the sandbox binding.",
+        ));
+    }
+    if !sandbox.verify_ownership().map_err(map_external_error)? {
+        return Err(external_error(
+            "ownership_verification_failed",
+            "The external sandbox ownership check failed.",
+        ));
+    }
+    sandbox.delete_owned_schema().map_err(map_external_error)?;
+    let mut state = state.lock().map_err(|_| {
+        external_error(
+            "external_database_error",
+            "Managed environment state is busy.",
+        )
+    })?;
+    external_sandbox_delete_preflight(&state, &request)?;
+    state
+        .store
+        .delete_environment(&record.env_id)
+        .map_err(|_| {
+            external_error(
+                "storage_failed",
+                "The external sandbox could not be removed.",
+            )
+        })?;
+    let records = state.store.list_environments().map_err(|_| {
+        external_error(
+            "storage_failed",
+            "The external sandbox state could not be read.",
+        )
+    })?;
+    state.ledger = EnvironmentLedger::restore(records).map_err(|_| {
+        external_error(
+            "storage_failed",
+            "The external sandbox state could not be updated.",
+        )
+    })?;
+    Ok(())
 }
 
 fn map_sqlserver_error(error: SqlServerError) -> ExternalCommandError {
@@ -1713,13 +2230,7 @@ fn create_managed_environment_value(
     if pack_version.is_empty() || pack_digest.is_empty() {
         return Err("An exact managed pack version and digest are required.".to_owned());
     }
-    let registry = state
-        .runtime_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("packs");
-    if PackImporter::new(registry)
-        .load_validated_exact(&request.pack_id, &pack_version, &pack_digest)
+    if installed_pack_exact(&state, &request.pack_id, &pack_version, &pack_digest)
         .map_err(|_| "Managed pack registry validation failed.".to_owned())?
         .is_none()
     {
@@ -1927,6 +2438,15 @@ fn delete_managed_environment_value(
         .lock()
         .map_err(|_| "Managed environment state is busy.".to_owned())?;
     ensure_managed_runtime(&mut state)?;
+    delete_environment_locked(&mut state, request)
+}
+
+/// Ownership-verified delete of one managed environment; the caller holds the state lock and
+/// has started the runtime.
+fn delete_environment_locked(
+    state: &mut ManagedEnvironmentState,
+    request: DeleteEnvironmentRequest,
+) -> Result<(), String> {
     let current = state
         .ledger
         .inspect(&request.env_id)
@@ -2008,8 +2528,65 @@ fn delete_managed_environment_value(
     Ok(())
 }
 
+/// Removes an installed pack after its managed environments are deleted. Submission history is
+/// kept. Nothing is deleted unless every environment can be deleted.
+fn delete_pack_value(
+    request: DeletePackRequest,
+    state: &Mutex<ManagedEnvironmentState>,
+) -> Result<(), String> {
+    if !request.confirmed {
+        return Err("Deleting a pack requires explicit confirmation.".to_owned());
+    }
+    let mut state = state
+        .lock()
+        .map_err(|_| "Managed environment state is busy.".to_owned())?;
+    if installed_pack_exact(&state, &request.pack_id, &request.version, &request.digest)?.is_none()
+    {
+        return Err("The exact pack is not installed.".to_owned());
+    }
+    let environments = state
+        .ledger
+        .list()
+        .into_iter()
+        .filter(|environment| {
+            environment.mode == EnvironmentMode::Managed
+                && environment.pack_id == request.pack_id
+                && environment.pack_version == request.version
+                && environment.pack_digest == request.digest
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if environments.iter().any(|environment| {
+        !matches!(
+            environment.state,
+            EnvironmentState::Ready | EnvironmentState::Error
+        )
+    }) {
+        return Err("A pack environment is busy or needs recovery; the pack was kept.".to_owned());
+    }
+    if !environments.is_empty() {
+        ensure_managed_runtime(&mut state)?;
+    }
+    for environment in environments {
+        delete_environment_locked(
+            &mut state,
+            DeleteEnvironmentRequest {
+                env_id: environment.env_id,
+                instance_id: environment.instance_id,
+                confirmed: true,
+            },
+        )
+        .map_err(|_| "A pack environment could not be deleted; the pack was kept.".to_owned())?;
+    }
+    state
+        .packs
+        .delete_pack(&request.digest)
+        .map_err(|_| "The pack could not be removed from the catalog.".to_owned())?;
+    Ok(())
+}
+
 fn managed_environment_summary(record: &EnvironmentRecord) -> Option<ManagedEnvironmentSummary> {
-    if record.mode != EnvironmentMode::Managed {
+    if record.mode == EnvironmentMode::ExternalExplorer {
         return None;
     }
     Some(ManagedEnvironmentSummary {
@@ -2022,6 +2599,7 @@ fn managed_environment_summary(record: &EnvironmentRecord) -> Option<ManagedEnvi
         mode: match record.mode {
             EnvironmentMode::Managed => "managed".to_owned(),
             EnvironmentMode::ExternalExplorer => "external_explorer".to_owned(),
+            EnvironmentMode::ExternalSandbox => "external_sandbox".to_owned(),
         },
         state: match record.state {
             EnvironmentState::Provisioning => "provisioning".to_owned(),
@@ -2206,12 +2784,8 @@ fn judge_request(
             };
         }
     };
-    let registry = state
-        .runtime_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("packs");
-    let pack = match PackImporter::new(registry).load_validated_exact(
+    let pack = match installed_pack_exact(
+        &state,
         &request.pack_id,
         &request.pack_version,
         &request.pack_digest,
@@ -2219,7 +2793,7 @@ fn judge_request(
         Ok(Some(pack)) => pack,
         Ok(None) | Err(_) => return policy_error("The exact requested pack is not installed."),
     };
-    let problem = match pack.problem(&request.problem_id) {
+    let problem = match installed_problem(&state, &pack, &request.problem_id) {
         Ok(Some(problem)) if problem.dialect == Dialect::Postgresql => problem,
         Ok(Some(_)) => {
             return policy_error("The requested problem is not supported by the managed judge.");
@@ -2256,6 +2830,34 @@ fn judge_request(
             };
         }
     };
+    // ADR-026: Run judges inside the pack sandbox; Submit keeps disposable fixture schemas.
+    let sandbox = if expected_mode == "run" {
+        let environment = ensure_pack_sandbox(&mut state, &pack).and_then(|record| {
+            ManagedEnvironment::new(
+                record.env_id,
+                record.instance_id,
+                record.namespace,
+                record.ownership_nonce,
+            )
+            .map_err(|_| "The pack sandbox identity failed policy validation.".to_owned())
+        });
+        match environment {
+            Ok(environment) => Some(environment),
+            Err(message) => {
+                return JudgeRunResult {
+                    status: "unavailable".to_owned(),
+                    verdict: None,
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    message,
+                    tests: Vec::new(),
+                };
+            }
+        }
+    } else {
+        None
+    };
     let mut session = match PostgresSession::connect(&connection_string) {
         Ok(session) => session,
         Err(_) => {
@@ -2270,14 +2872,27 @@ fn judge_request(
             };
         }
     };
-    let report = judge_submission_with_watchdog_token(
-        &mut session,
-        "sqljudge_runner",
-        &judge_cases(&problem, expected_mode == "submit"),
-        &request.sql,
-        &cancellation_token,
-        std::time::Duration::from_secs(5),
-    );
+    let cases = judge_cases(&problem, expected_mode == "submit");
+    let watchdog = std::time::Duration::from_secs(5);
+    let report = match &sandbox {
+        Some(environment) => judge_submission_in_namespace_with_watchdog_token(
+            &mut session,
+            environment,
+            "sqljudge_runner",
+            &cases,
+            &request.sql,
+            &cancellation_token,
+            watchdog,
+        ),
+        None => judge_submission_with_watchdog_token(
+            &mut session,
+            "sqljudge_runner",
+            &cases,
+            &request.sql,
+            &cancellation_token,
+            watchdog,
+        ),
+    };
     let duration_ms = started.elapsed().as_millis() as u64;
     let verdict = verdict_name(report.verdict).to_owned();
     let (columns, rows) = preview_response(report.preview.as_ref());
@@ -2294,9 +2909,9 @@ fn judge_request(
         .collect::<Vec<_>>();
     let submission = SubmissionRecord {
         submission_id: submission_id(),
-        pack_id: pack.id().to_owned(),
-        pack_version: pack.version().to_owned(),
-        pack_hash: pack.digest().to_owned(),
+        pack_id: pack.pack_id.clone(),
+        pack_version: pack.version.clone(),
+        pack_hash: pack.digest.clone(),
         engine_version: "postgresql-managed".to_owned(),
         policy_version: "policy-v1".to_owned(),
         verdict: verdict.clone(),
@@ -2368,6 +2983,55 @@ fn delete_connection_profile(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<(), String> {
     delete_connection_profile_value(&profile_id, state.inner(), &mut SessionSecretVault)
+}
+
+#[tauri::command]
+fn list_external_sandbox_profiles(
+    state: State<'_, Mutex<ManagedEnvironmentState>>,
+) -> Result<Vec<ExternalSandboxProfileSummary>, ExternalCommandError> {
+    list_external_sandbox_profiles_value(state.inner(), &SessionSecretVault)
+}
+
+#[tauri::command]
+fn probe_external_sandbox_profile(
+    request: ExternalProfileRequest,
+    state: State<'_, Mutex<ManagedEnvironmentState>>,
+) -> Result<ExternalSandboxProbeResponse, ExternalCommandError> {
+    let config =
+        external_profile_config_value(&request.profile_id, state.inner(), &SessionSecretVault)?;
+    let sandbox = ExternalPostgresSandbox::connect(
+        ExternalSandboxConfig::new(
+            config,
+            &request.profile_id,
+            "probe",
+            "sj_external_probe",
+            "probe",
+        )
+        .map_err(map_external_error)?,
+    )
+    .map_err(map_external_error)?;
+    let target = sandbox.target_identity();
+    Ok(ExternalSandboxProbeResponse {
+        database: target.database.clone(),
+        database_oid: target.database_oid,
+        system_identifier: target.system_identifier.clone(),
+    })
+}
+
+#[tauri::command]
+fn create_external_sandbox(
+    request: CreateExternalSandboxRequest,
+    state: State<'_, Mutex<ManagedEnvironmentState>>,
+) -> Result<ManagedEnvironmentSummary, ExternalCommandError> {
+    create_external_sandbox_value(request, state.inner(), &SessionSecretVault)
+}
+
+#[tauri::command]
+fn delete_external_sandbox(
+    request: DeleteExternalSandboxRequest,
+    state: State<'_, Mutex<ManagedEnvironmentState>>,
+) -> Result<(), ExternalCommandError> {
+    delete_external_sandbox_value(request, state.inner(), &SessionSecretVault)
 }
 
 #[tauri::command]
@@ -2581,6 +3245,14 @@ fn inspect_managed_pack(
 }
 
 #[tauri::command]
+fn delete_pack(
+    request: DeletePackRequest,
+    state: State<'_, Mutex<ManagedEnvironmentState>>,
+) -> Result<(), String> {
+    delete_pack_value(request, state.inner())
+}
+
+#[tauri::command]
 fn list_installed_packs(
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<Vec<problem_pack::PackCatalogEntry>, String> {
@@ -2672,6 +3344,10 @@ pub fn run() {
             list_connection_profiles,
             save_connection_profile,
             delete_connection_profile,
+            list_external_sandbox_profiles,
+            probe_external_sandbox_profile,
+            create_external_sandbox,
+            delete_external_sandbox,
             test_external_connection,
             list_external_metadata,
             execute_external_select,
@@ -2687,6 +3363,7 @@ pub fn run() {
             import_pack,
             inspect_managed_pack,
             list_installed_packs,
+            delete_pack,
             list_submission_history,
             export_backup,
             restore_backup,
@@ -2707,22 +3384,22 @@ pub fn run() {
 mod tests {
     use super::{
         CloneEnvironmentRequest, CreateEnvironmentRequest, DeleteEnvironmentRequest,
-        DestructiveAction, ExternalCommandError, ExternalConnectionInfo, ImportPackRequest,
-        JudgeRunRequest, MAX_EXTERNAL_SQL_BYTES, ManagedEnvironment, MemorySecretVault,
-        PostgresSession, RecoveryOperation, RecoveryRecord, ResetEnvironmentRequest,
-        SaveConnectionProfileRequest, SecretVault, cancel_judge_value,
+        DeletePackRequest, DestructiveAction, ExternalCommandError, ExternalConnectionInfo,
+        ImportPackRequest, JudgeRunRequest, MAX_EXTERNAL_SQL_BYTES, ManagedEnvironment,
+        MemorySecretVault, PostgresSession, RecoveryOperation, RecoveryRecord,
+        ResetEnvironmentRequest, SaveConnectionProfileRequest, SecretVault, cancel_judge_value,
         clone_managed_environment_value, create_managed_environment_value,
-        delete_connection_profile_value, delete_managed_environment_value, drop_recovery_namespace,
-        ensure_managed_runtime, export_backup_value, external_profile_config_value,
-        external_sqlserver_profile_config_value, import_pack_value, judge_cases, judge_request,
-        list_connection_profiles_value, list_installed_packs_value, load_environment_state,
-        load_environment_state_for_startup, managed_environment_summary, managed_pack_identity,
-        managed_runtime_status_value, provision_record, reconcile_environment_recovery,
-        register_cancellation, require_postgres_read_only, require_sqlserver_read_only,
-        reset_managed_environment_value, restore_backup_json_value, restore_backup_value,
-        save_connection_profile_value, sql_value_json, validate_external_sql_request,
-        validate_secret_ref, verdict_name, with_verified_postgres_explorer,
-        with_verified_sqlserver_explorer,
+        delete_connection_profile_value, delete_managed_environment_value, delete_pack_value,
+        drop_recovery_namespace, ensure_managed_runtime, export_backup_value,
+        external_profile_config_value, external_sqlserver_profile_config_value, import_pack_value,
+        judge_cases, judge_request, list_connection_profiles_value, list_installed_packs_value,
+        load_environment_state, load_environment_state_for_startup, managed_environment_summary,
+        managed_pack_identity, managed_runtime_status_value, provision_record,
+        reconcile_environment_recovery, register_cancellation, require_postgres_read_only,
+        require_sqlserver_read_only, reset_managed_environment_value, restore_backup_json_value,
+        restore_backup_value, save_connection_profile_value, sql_value_json,
+        validate_external_sql_request, validate_secret_ref, verdict_name,
+        with_verified_postgres_explorer, with_verified_sqlserver_explorer,
     };
     use environment_manager::{EnvironmentMode, EnvironmentRecord, EnvironmentState};
     use judge_core::SqlValue;
@@ -2799,6 +3476,420 @@ mod tests {
             .validate()
             .expect("validate sample pack");
         (pack.version().to_owned(), pack.digest().to_owned())
+    }
+
+    fn test_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "sql-judge-tauri-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).expect("create test root");
+        root
+    }
+
+    fn sample_pack_dir() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/packs/hr-analytics")
+    }
+
+    #[test]
+    fn native_import_stores_pack_in_sqlite_without_registry_files() {
+        let root = test_root("sqlite-catalog");
+        let mut native_state =
+            load_environment_state(&root.join("state.sqlite")).expect("load native state");
+        ensure_managed_runtime(&mut native_state).expect("start managed runtime");
+        let state = Mutex::new(native_state);
+        install_sample_pack(&state);
+
+        assert!(
+            !root.join("packs").exists(),
+            "import must not publish registry files"
+        );
+        let catalog = list_installed_packs_value(&state).expect("list catalog");
+        let (version, digest) = sample_pack_identity();
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].pack_id, "hr-analytics");
+        assert_eq!(
+            (&catalog[0].version, &catalog[0].digest),
+            (&version, &digest)
+        );
+        assert_eq!(catalog[0].problems.len(), 8);
+        let again = import_pack_value(
+            ImportPackRequest {
+                path: sample_pack_dir().to_string_lossy().into_owned(),
+            },
+            &state,
+        )
+        .expect("reinstall sample pack");
+        assert_eq!(again.status, "already_installed");
+        drop(state);
+        let reopened = Mutex::new(
+            load_environment_state(&root.join("state.sqlite")).expect("reopen native state"),
+        );
+        assert_eq!(
+            list_installed_packs_value(&reopened)
+                .expect("list catalog after reopen")
+                .len(),
+            1
+        );
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_legacy_registry_migrates_into_sqlite_and_is_removed() {
+        let root = test_root("legacy-migration");
+        let (_, digest) = sample_pack_identity();
+        copy_tree(&sample_pack_dir(), &root.join("packs/sha256").join(&digest));
+
+        let state = Mutex::new(
+            load_environment_state(&root.join("state.sqlite")).expect("load native state"),
+        );
+
+        let catalog = list_installed_packs_value(&state).expect("list migrated catalog");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].digest, digest);
+        assert!(
+            !root.join("packs").exists(),
+            "a fully migrated registry is removed"
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_corrupt_legacy_registry_is_kept_for_retry() {
+        let root = test_root("legacy-corrupt");
+        let (_, digest) = sample_pack_identity();
+        copy_tree(&sample_pack_dir(), &root.join("packs/sha256").join(&digest));
+        copy_tree(
+            &sample_pack_dir(),
+            &root.join("packs/sha256").join("0".repeat(64)),
+        );
+
+        let state = Mutex::new(
+            load_environment_state(&root.join("state.sqlite")).expect("load native state"),
+        );
+
+        let catalog = list_installed_packs_value(&state).expect("list partial catalog");
+        assert_eq!(catalog.len(), 1, "valid packs still migrate");
+        assert_eq!(catalog[0].digest, digest);
+        assert!(
+            root.join("packs/sha256").join("0".repeat(64)).exists(),
+            "the registry is kept while any pack fails to migrate"
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn namespace_exists(state: &Mutex<super::ManagedEnvironmentState>, namespace: &str) -> bool {
+        let connection = state
+            .lock()
+            .expect("lock native state")
+            .runtime
+            .as_ref()
+            .expect("managed runtime")
+            .connection_string();
+        let mut session = PostgresSession::connect(&connection).expect("connect runtime");
+        let result = session
+            .execute(
+                &format!(
+                    "SELECT count(*) FROM pg_catalog.pg_namespace WHERE nspname = '{namespace}'"
+                ),
+                judge_core::QueryLimits::new(2_000, 10, 64 * 1024),
+            )
+            .expect("inspect namespace");
+        result.rows[0][0] != SqlValue::Signed(0)
+    }
+
+    fn create_sample_environment(
+        state: &Mutex<super::ManagedEnvironmentState>,
+        env_id: &str,
+        namespace: &str,
+    ) -> super::ManagedEnvironmentSummary {
+        let (pack_version, pack_digest) = sample_pack_identity();
+        create_managed_environment_value(
+            CreateEnvironmentRequest {
+                env_id: env_id.to_owned(),
+                pack_id: "hr-analytics".to_owned(),
+                pack_version,
+                pack_digest,
+                namespace: namespace.to_owned(),
+            },
+            state,
+        )
+        .expect("create sample environment")
+    }
+
+    fn delete_sample_pack(
+        state: &Mutex<super::ManagedEnvironmentState>,
+        confirmed: bool,
+    ) -> Result<(), String> {
+        let (version, digest) = sample_pack_identity();
+        delete_pack_value(
+            DeletePackRequest {
+                pack_id: "hr-analytics".to_owned(),
+                version,
+                digest,
+                confirmed,
+            },
+            state,
+        )
+    }
+
+    #[test]
+    fn native_pack_delete_requires_confirmation_and_the_exact_identity() {
+        let root = test_root("pack-delete-guard");
+        let state = Mutex::new(
+            load_environment_state(&root.join("state.sqlite")).expect("load native state"),
+        );
+        install_sample_pack(&state);
+
+        assert!(delete_sample_pack(&state, false).is_err());
+        let (_, digest) = sample_pack_identity();
+        assert!(
+            delete_pack_value(
+                DeletePackRequest {
+                    pack_id: "hr-analytics".to_owned(),
+                    version: "9.9.9".to_owned(),
+                    digest,
+                    confirmed: true,
+                },
+                &state,
+            )
+            .is_err()
+        );
+        assert_eq!(list_installed_packs_value(&state).expect("list").len(), 1);
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_pack_delete_drops_environments_and_catalog_but_keeps_history() {
+        let root = test_root("pack-delete");
+        let mut native_state =
+            load_environment_state(&root.join("state.sqlite")).expect("load native state");
+        ensure_managed_runtime(&mut native_state).expect("start managed runtime");
+        let state = Mutex::new(native_state);
+        install_sample_pack(&state);
+        create_sample_environment(&state, "env-delete", "sj_env_delete");
+        let (version, digest) = sample_pack_identity();
+        let submit = judge_request(
+            JudgeRunRequest {
+                problem_id: "above-average".to_owned(),
+                pack_id: "hr-analytics".to_owned(),
+                pack_version: version,
+                pack_digest: digest,
+                sql: "SELECT 1".to_owned(),
+                mode: "submit".to_owned(),
+                request_id: None,
+            },
+            &state,
+            "submit",
+        );
+        assert_eq!(submit.status, "completed");
+        assert!(namespace_exists(&state, "sj_env_delete"));
+
+        delete_sample_pack(&state, true).expect("delete pack");
+
+        assert!(list_installed_packs_value(&state).expect("list").is_empty());
+        assert!(!namespace_exists(&state, "sj_env_delete"));
+        {
+            let guard = state.lock().expect("lock native state");
+            assert!(guard.ledger.list().is_empty());
+            assert!(
+                guard
+                    .store
+                    .get_environment("env-delete")
+                    .expect("read environment")
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            super::list_submission_history_value(&state)
+                .expect("history")
+                .len(),
+            1,
+            "submission history survives pack deletion"
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_pack_delete_keeps_the_pack_when_an_environment_cannot_be_deleted() {
+        let root = test_root("pack-delete-busy");
+        let mut native_state =
+            load_environment_state(&root.join("state.sqlite")).expect("load native state");
+        ensure_managed_runtime(&mut native_state).expect("start managed runtime");
+        let state = Mutex::new(native_state);
+        install_sample_pack(&state);
+        create_sample_environment(&state, "env-busy", "sj_env_busy");
+        state
+            .lock()
+            .expect("lock native state")
+            .ledger
+            .mark_running("env-busy")
+            .expect("mark environment running");
+
+        assert!(delete_sample_pack(&state, true).is_err());
+
+        assert_eq!(list_installed_packs_value(&state).expect("list").len(), 1);
+        assert!(namespace_exists(&state, "sj_env_busy"));
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn sample_sandbox() -> (String, String) {
+        let (_, digest) = sample_pack_identity();
+        (
+            format!("pack-{}", &digest[..16]),
+            format!("sj_pack_{}", &digest[..16]),
+        )
+    }
+
+    fn run_sample(
+        state: &Mutex<super::ManagedEnvironmentState>,
+        sql: &str,
+    ) -> super::JudgeRunResult {
+        let (version, digest) = sample_pack_identity();
+        judge_request(
+            JudgeRunRequest {
+                problem_id: "above-average".to_owned(),
+                pack_id: "hr-analytics".to_owned(),
+                pack_version: version,
+                pack_digest: digest,
+                sql: sql.to_owned(),
+                mode: "run".to_owned(),
+                request_id: None,
+            },
+            state,
+            "run",
+        )
+    }
+
+    const ABOVE_AVERAGE: &str = "SELECT e.id AS employee_id, e.name AS employee_name FROM employees AS e WHERE e.salary > (SELECT AVG(peer.salary) FROM employees AS peer WHERE peer.department_id = e.department_id)";
+
+    fn sandbox_row_count(
+        state: &Mutex<super::ManagedEnvironmentState>,
+        namespace: &str,
+    ) -> SqlValue {
+        let connection = state
+            .lock()
+            .expect("lock native state")
+            .runtime
+            .as_ref()
+            .expect("managed runtime")
+            .connection_string();
+        PostgresSession::connect(&connection)
+            .expect("connect runtime")
+            .execute(
+                &format!("SELECT count(*) FROM {namespace}.employees"),
+                judge_core::QueryLimits::new(2_000, 10, 64 * 1024),
+            )
+            .expect("count sandbox rows")
+            .rows[0][0]
+            .clone()
+    }
+
+    #[test]
+    fn native_import_creates_a_ready_pack_sandbox() {
+        let root = test_root("sandbox-import");
+        let mut native_state =
+            load_environment_state(&root.join("state.sqlite")).expect("load native state");
+        ensure_managed_runtime(&mut native_state).expect("start managed runtime");
+        let state = Mutex::new(native_state);
+        let result = import_pack_value(
+            ImportPackRequest {
+                path: sample_pack_dir().to_string_lossy().into_owned(),
+            },
+            &state,
+        )
+        .expect("import sample pack");
+
+        assert_eq!(result.sandbox, "ready");
+        let (env_id, namespace) = sample_sandbox();
+        {
+            let guard = state.lock().expect("lock native state");
+            let sandbox = guard.ledger.inspect(&env_id).expect("sandbox environment");
+            assert_eq!(sandbox.namespace, namespace);
+            assert_eq!(sandbox.state, EnvironmentState::Ready);
+            assert_eq!(sandbox.pack_digest, result.digest);
+        }
+        assert!(namespace_exists(&state, &namespace));
+        assert_eq!(sandbox_row_count(&state, &namespace), SqlValue::Signed(0));
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_run_uses_the_pack_sandbox_and_recreates_it_when_missing() {
+        let root = test_root("sandbox-run");
+        let mut native_state =
+            load_environment_state(&root.join("state.sqlite")).expect("load native state");
+        ensure_managed_runtime(&mut native_state).expect("start managed runtime");
+        let state = Mutex::new(native_state);
+        install_sample_pack(&state);
+        let (env_id, namespace) = sample_sandbox();
+        let instance_id = state
+            .lock()
+            .expect("lock native state")
+            .runtime_instance_id
+            .clone();
+        delete_managed_environment_value(
+            DeleteEnvironmentRequest {
+                env_id: env_id.clone(),
+                instance_id,
+                confirmed: true,
+            },
+            &state,
+        )
+        .expect("delete sandbox");
+        assert!(!namespace_exists(&state, &namespace));
+
+        let run = run_sample(&state, ABOVE_AVERAGE);
+
+        assert_eq!(run.status, "completed");
+        assert_eq!(run.verdict.as_deref(), Some("Accepted"));
+        assert_eq!(run.rows.len(), 2);
+        assert!(
+            namespace_exists(&state, &namespace),
+            "Run recreates the sandbox"
+        );
+        assert_eq!(
+            sandbox_row_count(&state, &namespace),
+            SqlValue::Signed(0),
+            "Run leaves the sandbox empty"
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_run_is_unavailable_while_the_pack_sandbox_is_not_ready() {
+        let root = test_root("sandbox-busy");
+        let mut native_state =
+            load_environment_state(&root.join("state.sqlite")).expect("load native state");
+        ensure_managed_runtime(&mut native_state).expect("start managed runtime");
+        let state = Mutex::new(native_state);
+        install_sample_pack(&state);
+        let (env_id, _) = sample_sandbox();
+        state
+            .lock()
+            .expect("lock native state")
+            .ledger
+            .mark_running(&env_id)
+            .expect("mark sandbox running");
+
+        let run = run_sample(&state, ABOVE_AVERAGE);
+
+        assert_eq!(run.status, "unavailable");
+        assert!(run.tests.is_empty());
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn copy_tree(source: &Path, destination: &Path) {
@@ -3643,6 +4734,185 @@ mod tests {
     }
 
     #[test]
+    fn connection_profile_deletion_rejects_a_bound_external_sandbox() {
+        let root = test_root("external-sandbox-profile-binding");
+        let state = Mutex::new(
+            load_environment_state(&root.join("state.sqlite")).expect("load native state"),
+        );
+        let mut vault = MemorySecretVault::default();
+        save_connection_profile_value(
+            SaveConnectionProfileRequest {
+                profile_id: "profile-bound".to_owned(),
+                display_name: "External PostgreSQL".to_owned(),
+                engine: "postgresql".to_owned(),
+                host: "db.example.test".to_owned(),
+                port: 5432,
+                database: "practice".to_owned(),
+                username: "sandbox_owner".to_owned(),
+                tls_mode: "verify_full".to_owned(),
+                secret: Some("secret-canary".to_owned()),
+            },
+            &state,
+            &mut vault,
+        )
+        .expect("save external profile");
+        {
+            let mut guard = state.lock().expect("lock native state");
+            let record = EnvironmentRecord {
+                env_id: "external-bound".to_owned(),
+                instance_id: "server-identity".to_owned(),
+                pack_id: "hr-analytics".to_owned(),
+                pack_version: "1.0.0".to_owned(),
+                pack_digest: "a".repeat(64),
+                namespace: "sj_external_bound".to_owned(),
+                ownership_nonce: "external-nonce".to_owned(),
+                mode: EnvironmentMode::ExternalSandbox,
+                state: EnvironmentState::Ready,
+            };
+            guard
+                .store
+                .save_environment(&record)
+                .expect("save environment");
+            guard
+                .store
+                .save_external_sandbox_target(
+                    &record.env_id,
+                    &environment_manager::ExternalSandboxTarget {
+                        profile_id: "profile-bound".to_owned(),
+                        server_identity: "server-identity".to_owned(),
+                        database_identity: "practice:1".to_owned(),
+                    },
+                )
+                .expect("save target binding");
+        }
+
+        let error = delete_connection_profile_value("profile-bound", &state, &mut vault)
+            .expect_err("a bound sandbox profile must not be deleted");
+        assert_eq!(
+            error,
+            "Connection profile is still bound to an external sandbox."
+        );
+        assert!(
+            vault
+                .get_secret("vault://sql-judge/profile-bound")
+                .expect("read vault")
+                .is_some(),
+            "rejection must preserve the credential"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn external_sandbox_profile_access_rejects_forged_profiles_and_missing_secrets() {
+        let root = test_root("external-sandbox-profile-access");
+        let state = Mutex::new(
+            load_environment_state(&root.join("state.sqlite")).expect("load native state"),
+        );
+        let mut vault = MemorySecretVault::default();
+
+        let forged = match external_profile_config_value("forged-profile", &state, &vault) {
+            Err(error) => error,
+            Ok(_) => panic!("forged profile must be rejected"),
+        };
+        assert_eq!(forged.code, "profile_invalid");
+
+        save_connection_profile_value(
+            SaveConnectionProfileRequest {
+                profile_id: "profile-without-secret".to_owned(),
+                display_name: "External PostgreSQL".to_owned(),
+                engine: "postgresql".to_owned(),
+                host: "db.example.test".to_owned(),
+                port: 5432,
+                database: "practice".to_owned(),
+                username: "sandbox_owner".to_owned(),
+                tls_mode: "verify_full".to_owned(),
+                secret: None,
+            },
+            &state,
+            &mut vault,
+        )
+        .expect("save profile without secret");
+        let missing = match external_profile_config_value("profile-without-secret", &state, &vault)
+        {
+            Err(error) => error,
+            Ok(_) => panic!("missing secret must be rejected"),
+        };
+        assert_eq!(missing.code, "secret_unavailable");
+        assert!(!format!("{missing:?}").contains("secret-canary"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn external_sandbox_delete_preflight_rejects_unbound_and_mismatched_targets() {
+        let root = test_root("external-sandbox-delete-preflight");
+        let mut state = load_environment_state(&root.join("state.sqlite")).expect("load state");
+        let unbound = EnvironmentRecord {
+            env_id: "external-unbound".to_owned(),
+            instance_id: "server-identity".to_owned(),
+            pack_id: "hr-analytics".to_owned(),
+            pack_version: "1.0.0".to_owned(),
+            pack_digest: "a".repeat(64),
+            namespace: "sj_external_unbound".to_owned(),
+            ownership_nonce: "external-nonce".to_owned(),
+            mode: EnvironmentMode::ExternalSandbox,
+            state: EnvironmentState::Ready,
+        };
+        state
+            .ledger
+            .create(unbound.clone())
+            .expect("reserve unbound");
+        state
+            .store
+            .save_environment(&unbound)
+            .expect("save unbound");
+        let unbound_error = super::external_sandbox_delete_preflight(
+            &state,
+            &super::DeleteExternalSandboxRequest {
+                env_id: unbound.env_id.clone(),
+                confirmed: true,
+            },
+        )
+        .expect_err("unbound sandbox must be rejected");
+        assert_eq!(unbound_error.code, "sandbox_unbound");
+
+        let mismatched = EnvironmentRecord {
+            env_id: "external-mismatched".to_owned(),
+            instance_id: "server-identity-a".to_owned(),
+            namespace: "sj_external_mismatched".to_owned(),
+            ..unbound
+        };
+        state
+            .ledger
+            .create(mismatched.clone())
+            .expect("reserve mismatched");
+        state
+            .store
+            .save_environment(&mismatched)
+            .expect("save mismatched");
+        state
+            .store
+            .save_external_sandbox_target(
+                &mismatched.env_id,
+                &environment_manager::ExternalSandboxTarget {
+                    profile_id: "profile-a".to_owned(),
+                    server_identity: "server-identity-b".to_owned(),
+                    database_identity: "practice:1".to_owned(),
+                },
+            )
+            .expect("save mismatched target");
+        let mismatch_error = super::external_sandbox_delete_preflight(
+            &state,
+            &super::DeleteExternalSandboxRequest {
+                env_id: mismatched.env_id,
+                confirmed: true,
+            },
+        )
+        .expect_err("mismatched target must be rejected");
+        assert_eq!(mismatch_error.code, "target_mismatch");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn external_profile_config_keeps_secret_native_and_rejects_sql_server_routing() {
         let root = std::env::temp_dir().join(format!(
             "sql-judge-external-profile-{}-{}",
@@ -4222,7 +5492,9 @@ mod tests {
         drop(state);
 
         let restarted = load_environment_state(&path).expect("restart from preserved state");
-        assert_eq!(restarted.ledger.list().len(), 1);
+        // The pack sandbox provisioned on import survives the restart too (ADR-026).
+        assert_eq!(restarted.ledger.list().len(), 2);
+        assert!(restarted.ledger.inspect(&sample_sandbox().0).is_ok());
         assert_eq!(
             restarted
                 .store
@@ -4643,7 +5915,18 @@ mod tests {
         )
         .expect("delete second environment");
         let state_guard = state.lock().expect("lock native state");
-        assert_eq!(state_guard.ledger.list().len(), 1);
+        // Importing the pack also provisioned its sandbox (ADR-026).
+        let (sandbox_id, _) = sample_sandbox();
+        assert_eq!(
+            state_guard
+                .ledger
+                .list()
+                .iter()
+                .map(|environment| environment.env_id.as_str())
+                .filter(|env_id| *env_id != sandbox_id)
+                .collect::<Vec<_>>(),
+            vec![first.env_id.as_str()]
+        );
         assert_eq!(
             state_guard
                 .ledger

@@ -58,17 +58,34 @@ const stateBadges: Record<ManagedEnvironmentSummary["state"], PackTone> = {
 }
 const toneRank: PackTone[] = ["ok", "muted", "warn", "err"]
 
-export function packEnvironmentBadge(
+export function packEnvironments(
   pack: PackIdentity,
   environments: ManagedEnvironmentSummary[]
-): { label: string; tone: PackTone } {
-  const owned = environments.filter(
+) {
+  return environments.filter(
     (environment) =>
       environment.mode === "managed" &&
       environment.packId === pack.packId &&
       environment.packVersion === pack.version &&
       environment.packDigest === pack.digest
   )
+}
+
+/** Mirrors the native rule: a pack is deleted only when all its environments can be. */
+export function packDeleteBlocker(environments: ManagedEnvironmentSummary[]) {
+  const blocked = environments.find(
+    (environment) => environment.state !== "ready" && environment.state !== "error"
+  )
+  return blocked
+    ? `${blocked.namespace} ${blocked.state === "needs_recovery" ? "needs recovery" : `is ${blocked.state}`}. Wait for it to finish or recover it from Environments before deleting this pack.`
+    : null
+}
+
+export function packEnvironmentBadge(
+  pack: PackIdentity,
+  environments: ManagedEnvironmentSummary[]
+): { label: string; tone: PackTone } {
+  const owned = packEnvironments(pack, environments)
   if (owned.length === 0) {
     return { label: "No environment", tone: "muted" }
   }

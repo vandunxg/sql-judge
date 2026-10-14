@@ -106,6 +106,11 @@ function EnvironmentRow({
     <tr className="group hover:bg-accent">
       <td className={cell}>
         <div className="font-mono font-medium">{environment.namespace}</div>
+        {environment.mode === "external_sandbox" ? (
+          <div className="text-[12.5px] text-muted-foreground">
+            External PostgreSQL sandbox
+          </div>
+        ) : null}
         {status.tone === "warn" || status.tone === "err" ? (
           <div
             className={cn(

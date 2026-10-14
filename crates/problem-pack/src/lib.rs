@@ -14,6 +14,10 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use zip::ZipArchive;
 
+mod stored;
+
+pub use stored::{catalog_from_records, pack_records, problem_from_record};
+
 const MAX_FILES: usize = 2_000;
 const MAX_ENTRIES: usize = 4_096;
 const MAX_FILE_BYTES: usize = 1024 * 1024;
@@ -35,7 +39,7 @@ pub struct ValidatedPack {
     digest: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackCatalogEntry {
     pub pack_id: String,
@@ -46,7 +50,7 @@ pub struct PackCatalogEntry {
     pub problems: Vec<ProblemCatalogEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProblemCatalogEntry {
     pub id: String,
@@ -65,19 +69,19 @@ pub struct ProblemCatalogEntry {
     pub sample_tables: Vec<CatalogSampleTable>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogSampleTable {
     pub name: String,
     pub rows: Vec<BTreeMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogTable {
     pub name: String,
     pub columns: Vec<CatalogColumn>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogColumn {
     pub name: String,
     pub r#type: String,
@@ -260,6 +264,8 @@ pub enum PackError {
     InvalidPublishedDestination,
     #[error("pack publication failed")]
     Publication,
+    #[error("installed pack record is invalid: {0}")]
+    InvalidStoredRecord(&'static str),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -580,6 +586,21 @@ impl PackData {
     }
 }
 
+/// One legacy registry directory: its folder name and the pack it validated to, if any.
+pub type PublishedPackLoad = (String, Result<ValidatedPack, PackError>);
+
+/// Runs every reference test in disposable fixtures without publishing anything (ADR-025).
+pub fn validate_pack_runtime(
+    pack: &ValidatedPack,
+    session: &mut ManagedPostgresSession,
+    runner_role: &str,
+) -> Result<(), PackError> {
+    if pack.manifest.dialect != Dialect::Postgresql {
+        return Err(PackError::UnsupportedDialect);
+    }
+    validate_runtime(pack, session, runner_role)
+}
+
 impl PackImporter {
     pub fn new(registry: impl Into<PathBuf>) -> Self {
         Self {
@@ -598,6 +619,34 @@ impl PackImporter {
         }
         validate_runtime(pack, session, runner_role)?;
         self.publish(pack)
+    }
+
+    /// Loads every published registry directory on its own, so one corrupt pack cannot block
+    /// the others. Each entry pairs the directory name with its validated pack.
+    pub fn load_published(&self) -> Result<Vec<PublishedPackLoad>, PackError> {
+        let digest_root = self.registry.join("sha256");
+        if !digest_root.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut packs = Vec::new();
+        for entry in fs::read_dir(digest_root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let digest = entry.file_name().to_string_lossy().into_owned();
+            let pack = PackData::from_directory(entry.path())
+                .and_then(|data| data.validate())
+                .and_then(|pack| {
+                    if pack.digest() == digest {
+                        Ok(pack)
+                    } else {
+                        Err(PackError::InvalidPublishedDestination)
+                    }
+                });
+            packs.push((digest, pack));
+        }
+        Ok(packs)
     }
 
     pub fn load_validated(&self, pack_id: &str) -> Result<Option<ValidatedPack>, PackError> {
@@ -1332,7 +1381,8 @@ fn is_semver(value: &str) -> bool {
         })
 }
 
-fn version_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+/// Compares dotted numeric versions; non-numeric parts count as 0.
+pub fn version_cmp(left: &str, right: &str) -> std::cmp::Ordering {
     left.split('.')
         .map(|part| part.parse::<u64>().unwrap_or(0))
         .cmp(

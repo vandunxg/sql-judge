@@ -2,6 +2,7 @@ import { useState } from "react"
 
 import {
   createManagedEnvironment,
+  createExternalSandbox,
   startManagedRuntime,
   type InstalledPack,
   type ManagedEnvironmentSummary,
@@ -101,6 +102,46 @@ export function useEnvironments() {
     return null
   }
 
+  async function createExternalEnvironment(
+    pack: InstalledPack | null,
+    envId: string,
+    profileId: string,
+    confirmed: boolean
+  ): Promise<string | null> {
+    if (!pack) {
+      return "Import the managed pack before creating an environment."
+    }
+    if (!profileId) {
+      return "Select a verified PostgreSQL profile."
+    }
+    if (!confirmed) {
+      return "Confirm the external sandbox impact before creating it."
+    }
+    const normalizedEnvId = envId.trim()
+    if (!normalizedEnvId) {
+      return "Enter an environment ID."
+    }
+    setBusy(true)
+    try {
+      await createExternalSandbox({
+        envId: normalizedEnvId,
+        profileId,
+        packId: pack.packId,
+        packVersion: pack.version,
+        packDigest: pack.digest,
+        confirmed: true,
+      })
+    } catch {
+      setBusy(false)
+      return "The external sandbox could not be created. Verify the target and try again."
+    }
+    await refreshAfter(
+      "External practice sandbox is ready.",
+      "External practice sandbox was created"
+    )
+    return null
+  }
+
   function requestAction(
     action: PendingAction["action"],
     environment: ManagedEnvironmentSummary
@@ -159,6 +200,7 @@ export function useEnvironments() {
     retry,
     startRuntime,
     createEnvironment,
+    createExternalEnvironment,
     requestAction,
     cancelAction: () => setPendingAction(null),
     confirmPendingAction,

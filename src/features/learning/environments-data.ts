@@ -2,9 +2,11 @@ import { useEffect, useState } from "react"
 
 import {
   getManagedRuntimeStatus,
+  listConnectionProfiles,
   listInstalledPacks,
   listManagedEnvironments,
   type InstalledPack,
+  type ConnectionProfileSummary,
   type ManagedEnvironmentSummary,
   type ManagedRuntimeStatus,
 } from "@/lib/judge-api"
@@ -15,6 +17,7 @@ function loadAll() {
     getManagedRuntimeStatus(),
     listManagedEnvironments(),
     listInstalledPacks(),
+    listConnectionProfiles(),
   ])
 }
 
@@ -23,6 +26,7 @@ export function useEnvironmentData() {
   const [runtimeStatus, setRuntimeStatus] =
     useState<ManagedRuntimeStatus | null>(null)
   const [packs, setPacks] = useState<InstalledPack[]>([])
+  const [profiles, setProfiles] = useState<ConnectionProfileSummary[]>([])
   const [environments, setEnvironments] = useState<ManagedEnvironmentSummary[]>(
     []
   )
@@ -31,12 +35,13 @@ export function useEnvironmentData() {
   const [error, setError] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
 
-  function applyLoaded([status, records, installed]: Awaited<
+  function applyLoaded([status, records, installed, connectionProfiles]: Awaited<
     ReturnType<typeof loadAll>
   >) {
     setRuntimeStatus(status)
     setEnvironments(records)
     setPacks(installed)
+    setProfiles(connectionProfiles)
     setError(null)
   }
 
@@ -44,6 +49,7 @@ export function useEnvironmentData() {
     setRuntimeStatus(null)
     setEnvironments([])
     setPacks([])
+    setProfiles([])
     setError(learningLoadErrorMessage("environments"))
   }
 
@@ -90,6 +96,7 @@ export function useEnvironmentData() {
     runtimeStatus,
     setRuntimeStatus,
     packs,
+    profiles,
     environments,
     busy,
     setBusy,

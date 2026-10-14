@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test"
 
 import { problemStatuses } from "./problem-status"
 import {
+  packDeleteBlocker,
   packEnvironmentBadge,
+  packEnvironments,
   packMonogram,
   packProgress,
   packTableCount,
@@ -134,5 +136,28 @@ describe("pack environment badge", () => {
       label: "No environment",
       tone: "muted",
     })
+  })
+})
+
+describe("pack deletion", () => {
+  test("lists only the managed environments of the exact pack", () => {
+    const owned = env({ envId: "env-a" })
+    expect(
+      packEnvironments(pack, [
+        owned,
+        env({ envId: "other-digest", packDigest: "other" }),
+        env({ envId: "explorer", mode: "external_explorer" }),
+      ])
+    ).toEqual([owned])
+  })
+
+  test("blocks deletion while an environment is busy or needs recovery", () => {
+    expect(packDeleteBlocker([env({}), env({ state: "error" })])).toBeNull()
+    expect(packDeleteBlocker([env({ envId: "env-busy", namespace: "sj_busy", state: "running" })])).toBe(
+      "sj_busy is running. Wait for it to finish or recover it from Environments before deleting this pack."
+    )
+    expect(packDeleteBlocker([env({ namespace: "sj_broken", state: "needs_recovery" })])).toBe(
+      "sj_broken needs recovery. Wait for it to finish or recover it from Environments before deleting this pack."
+    )
   })
 })

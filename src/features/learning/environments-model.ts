@@ -73,7 +73,10 @@ export function environmentBlockedReason(
   if (busy) {
     return "Another environment action is in progress."
   }
-  if (environment.mode !== "managed") {
+  if (
+    environment.mode !== "managed" &&
+    environment.mode !== "external_sandbox"
+  ) {
     return "Only schemas owned by SQL Judge can change."
   }
   switch (environment.state) {

@@ -24,7 +24,7 @@ No capability is complete until its AC passes on the implemented target; documen
 | AC-018 | REQ-018 | Logs include IDs/duration/operation/status but never password/connection string/raw SQL unless user opted in. |
 | AC-019 | REQ-019 | Keyboard-only path covers Home -> Practice -> editor -> Run/Submit -> results and explorer flows; meaningful focus and screen reader labels; Home is the default application route. |
 | AC-020 | REQ-020 | Backup import round-trip preserves pack metadata/history but omits secrets and vault keys. |
-| AC-021 | REQ-022,024 | Advanced external writable mode remains gated until dedicated security acceptance and separate approval. |
+| AC-021 | REQ-022 | An explicitly confirmed PostgreSQL sandbox is created only in a generated, marker-owned schema on the selected verified profile; forged IDs, changed targets, unmarked schemas, and profile deletion while referenced are denied without modifying the external database. |
 | AC-022 | REQ-001,023 | Selected OS artifacts produced by CI and tested with actual runtime packaging; otherwise documented as *not yet verified*. |
 | AC-023 | REQ-019,025; NFR-011 | At the artboard viewport and supported responsive widths, each implemented screen matches its corresponding design export for shell geometry, tokens, typography, spacing, radii, borders, shadows, icons, interaction states and loading/empty/error states. Evidence is a rendered comparison; exported HTML is not shipped as production UI. |
 

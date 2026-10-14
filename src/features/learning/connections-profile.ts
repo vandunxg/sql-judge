@@ -63,7 +63,8 @@ export function draftForEngine(draft: ProfileDraft, engine: Engine): ProfileDraf
 const TLS_LABELS: Record<TlsMode, [string, string]> = {
   verify_full: ["Verify certificate and host", "TLS verified"],
   verify_ca: ["Verify certificate authority", "TLS CA verified"],
-  require: ["Require TLS (no certificate check)", "TLS not verified"],
+  // ADR-018: `require` stays encrypted and certificate-verified.
+  require: ["Require TLS (certificate verified)", "TLS required"],
 }
 
 export function tlsModeLabel(mode: TlsMode): string {

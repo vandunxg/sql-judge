@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { isPackImportDisabled, readPackImportError } from "./pack-errors"
+import { isPackImportDisabled, readPackDeleteError, readPackImportError } from "./pack-errors"
 
 describe("readPackImportError", () => {
   test("preserves safe actionable native pack errors", () => {
@@ -13,6 +13,11 @@ describe("readPackImportError", () => {
     expect(
       readPackImportError({ message: "Pack source could not be loaded." })
     ).toBe("Pack source could not be loaded.")
+  })
+
+  test("explains an immutable version conflict", () => {
+    const message = "Another pack is already installed with this ID and version."
+    expect(readPackImportError(message)).toBe(message)
   })
 
   test("explains the local PostgreSQL prerequisite", () => {
@@ -47,5 +52,18 @@ describe("isPackImportDisabled", () => {
       desktop: isPackImportDisabled(true, false),
       busy: isPackImportDisabled(true, true),
     }).toEqual({ browser: true, desktop: false, busy: true })
+  })
+})
+
+describe("pack delete errors", () => {
+  test("keeps safe native outcomes and hides everything else", () => {
+    const kept = "A pack environment could not be deleted; the pack was kept."
+    expect(readPackDeleteError(kept)).toBe(kept)
+    expect(readPackDeleteError(new Error("The exact pack is not installed."))).toBe(
+      "The exact pack is not installed."
+    )
+    expect(readPackDeleteError("/tmp/state.sqlite: disk I/O error")).toBe(
+      "The pack was not deleted. Try again."
+    )
   })
 })

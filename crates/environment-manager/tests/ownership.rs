@@ -1,6 +1,6 @@
 use environment_manager::{
-    DestructiveAction, EnvironmentMode, EnvironmentRecord, EnvironmentState, OwnershipError,
-    authorize_destructive_action,
+    DestructiveAction, EnvironmentMode, EnvironmentRecord, EnvironmentState, ExternalSandboxTarget,
+    OwnershipError, authorize_destructive_action, authorize_external_sandbox_action,
 };
 
 fn managed() -> EnvironmentRecord {
@@ -15,6 +15,45 @@ fn managed() -> EnvironmentRecord {
         mode: EnvironmentMode::Managed,
         state: EnvironmentState::Ready,
     }
+}
+
+#[test]
+fn matching_external_sandbox_target_authorizes_lifecycle_actions() {
+    let mut record = managed();
+    record.mode = EnvironmentMode::ExternalSandbox;
+    let target = ExternalSandboxTarget {
+        profile_id: "profile-training".to_owned(),
+        server_identity: "postgresql://db.example.test:5432".to_owned(),
+        database_identity: "training".to_owned(),
+    };
+
+    assert_eq!(
+        authorize_external_sandbox_action(
+            &record,
+            Some(&target),
+            DestructiveAction::Reset {
+                env_id: "env-1".to_owned(),
+                instance_id: "instance-1".to_owned(),
+                ownership_nonce: "nonce-1".to_owned(),
+                confirmed: true,
+            }
+        ),
+        Ok(())
+    );
+
+    assert_eq!(
+        authorize_external_sandbox_action(
+            &record,
+            None,
+            DestructiveAction::Reset {
+                env_id: "env-1".to_owned(),
+                instance_id: "instance-1".to_owned(),
+                ownership_nonce: "nonce-1".to_owned(),
+                confirmed: true,
+            }
+        ),
+        Err(OwnershipError::ExternalSandboxTargetRequired)
+    );
 }
 
 #[test]

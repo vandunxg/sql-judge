@@ -123,6 +123,12 @@ describe("environments model", () => {
         false
       )
     ).toBe("Only schemas owned by SQL Judge can change.")
+    expect(
+      environmentBlockedReason(
+        { ...environment, mode: "external_sandbox" },
+        false
+      )
+    ).toBeNull()
   })
 
   test("rejects invalid or already used namespaces before a native call", () => {

@@ -1,4 +1,6 @@
-use crate::{CancellationReason, CancellationToken, PostgresSession, QueryExecutionError};
+use crate::{
+    CancellationReason, CancellationToken, ManagedEnvironment, PostgresSession, QueryExecutionError,
+};
 use judge_core::{
     ComparisonMismatch, OutputPolicy, QueryLimits, QueryResult, Verdict, aggregate_verdicts,
     compare_query_results,
@@ -33,6 +35,15 @@ pub struct SubmissionReport {
     pub preview: Option<QueryResult>,
 }
 
+/// Where each case's fixture is loaded. Both targets roll every fixture back.
+#[derive(Clone, Copy)]
+enum FixtureTarget<'a> {
+    /// A disposable schema built from the case schema, used for Submit.
+    Disposable,
+    /// The pack's provisioned sandbox namespace, used for Run (ADR-026).
+    Namespace(&'a ManagedEnvironment),
+}
+
 struct FixtureExecution {
     reference: Result<QueryResult, QueryExecutionError>,
     user: Option<Result<QueryResult, QueryExecutionError>>,
@@ -45,7 +56,15 @@ pub fn judge_submission(
     cases: &[JudgeCase<'_>],
     user_sql: &str,
 ) -> SubmissionReport {
-    judge_submission_inner(session, runner_role, cases, user_sql, &|| false, None)
+    judge_submission_inner(
+        session,
+        FixtureTarget::Disposable,
+        runner_role,
+        cases,
+        user_sql,
+        &|| false,
+        None,
+    )
 }
 
 pub fn judge_submission_with_cancel<F>(
@@ -58,7 +77,15 @@ pub fn judge_submission_with_cancel<F>(
 where
     F: Fn() -> bool,
 {
-    judge_submission_inner(session, runner_role, cases, user_sql, &is_cancelled, None)
+    judge_submission_inner(
+        session,
+        FixtureTarget::Disposable,
+        runner_role,
+        cases,
+        user_sql,
+        &is_cancelled,
+        None,
+    )
 }
 
 pub fn judge_submission_with_token(
@@ -70,6 +97,7 @@ pub fn judge_submission_with_token(
 ) -> SubmissionReport {
     judge_submission_inner(
         session,
+        FixtureTarget::Disposable,
         runner_role,
         cases,
         user_sql,
@@ -117,8 +145,41 @@ pub fn judge_submission_with_watchdog_token(
     report
 }
 
+/// Judges each case against the pack sandbox namespace instead of a disposable schema. The
+/// cases' `schema_sql` is ignored: the namespace was provisioned with the pack schema.
+pub fn judge_submission_in_namespace_with_watchdog_token(
+    session: &mut PostgresSession,
+    environment: &ManagedEnvironment,
+    runner_role: &str,
+    cases: &[JudgeCase<'_>],
+    user_sql: &str,
+    token: &CancellationToken,
+    watchdog_after: Duration,
+) -> SubmissionReport {
+    let (finished, deadline) = mpsc::channel();
+    let watchdog_token = token.clone();
+    let watchdog = thread::spawn(move || {
+        if deadline.recv_timeout(watchdog_after).is_err() {
+            watchdog_token.cancel_for_watchdog();
+        }
+    });
+    let report = judge_submission_inner(
+        session,
+        FixtureTarget::Namespace(environment),
+        runner_role,
+        cases,
+        user_sql,
+        &|| token.is_cancelled(),
+        Some(token),
+    );
+    let _ = finished.send(());
+    let _ = watchdog.join();
+    report
+}
+
 fn judge_submission_inner(
     session: &mut PostgresSession,
+    target: FixtureTarget<'_>,
     runner_role: &str,
     cases: &[JudgeCase<'_>],
     user_sql: &str,
@@ -136,34 +197,38 @@ fn judge_submission_inner(
                 preview,
             };
         }
-        let execution = session.with_managed_fixture(
-            runner_role,
-            case.schema_sql,
-            case.fixture_sql,
-            |session| {
-                let reference = match cancellation {
-                    Some(token) => {
-                        session.execute_with_cancel(case.reference_sql, case.limits, token)
-                    }
-                    None => session.execute(case.reference_sql, case.limits),
-                };
-                let user_started = Instant::now();
-                let user = reference.as_ref().ok().map(|_| match cancellation {
-                    Some(token) => session.execute_with_cancel(user_sql, case.limits, token),
-                    None => session.execute(user_sql, case.limits),
-                });
-                let user_elapsed_ms = if user.is_some() {
-                    u64::try_from(user_started.elapsed().as_millis()).unwrap_or(u64::MAX)
-                } else {
-                    0
-                };
-                Ok(FixtureExecution {
-                    reference,
-                    user,
-                    user_elapsed_ms,
-                })
-            },
-        );
+        let run_case = |session: &mut PostgresSession| {
+            let reference = match cancellation {
+                Some(token) => session.execute_with_cancel(case.reference_sql, case.limits, token),
+                None => session.execute(case.reference_sql, case.limits),
+            };
+            let user_started = Instant::now();
+            let user = reference.as_ref().ok().map(|_| match cancellation {
+                Some(token) => session.execute_with_cancel(user_sql, case.limits, token),
+                None => session.execute(user_sql, case.limits),
+            });
+            let user_elapsed_ms = if user.is_some() {
+                u64::try_from(user_started.elapsed().as_millis()).unwrap_or(u64::MAX)
+            } else {
+                0
+            };
+            Ok(FixtureExecution {
+                reference,
+                user,
+                user_elapsed_ms,
+            })
+        };
+        let execution = match target {
+            FixtureTarget::Disposable => session.with_managed_fixture(
+                runner_role,
+                case.schema_sql,
+                case.fixture_sql,
+                run_case,
+            ),
+            FixtureTarget::Namespace(environment) => {
+                session.with_namespace_fixture(environment, runner_role, case.fixture_sql, run_case)
+            }
+        };
 
         if is_cancelled() {
             return SubmissionReport {

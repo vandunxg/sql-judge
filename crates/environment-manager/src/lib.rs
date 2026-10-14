@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod ledger;
@@ -8,6 +9,23 @@ pub use ledger::{EnvironmentLedger, LifecycleError};
 pub enum EnvironmentMode {
     Managed,
     ExternalExplorer,
+    ExternalSandbox,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ExternalSandboxTarget {
+    pub profile_id: String,
+    pub server_identity: String,
+    pub database_identity: String,
+}
+
+impl ExternalSandboxTarget {
+    pub fn is_valid(&self) -> bool {
+        is_safe_identifier(&self.profile_id)
+            && is_safe_identity(&self.server_identity)
+            && is_safe_identity(&self.database_identity)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +72,8 @@ pub enum DestructiveAction {
 pub enum OwnershipError {
     #[error("destructive actions are only allowed for managed environments")]
     ExternalEnvironment,
+    #[error("external sandbox requires a valid target binding")]
+    ExternalSandboxTargetRequired,
     #[error("environment identity does not match the durable marker")]
     EnvironmentMismatch,
     #[error("database instance identity does not match the durable marker")]
@@ -75,6 +95,29 @@ pub fn authorize_destructive_action(
     if record.mode != EnvironmentMode::Managed {
         return Err(OwnershipError::ExternalEnvironment);
     }
+    authorize_action_identity(record, action)
+}
+
+pub fn authorize_external_sandbox_action(
+    record: &EnvironmentRecord,
+    target: Option<&ExternalSandboxTarget>,
+    action: DestructiveAction,
+) -> Result<(), OwnershipError> {
+    if record.mode == EnvironmentMode::ExternalExplorer {
+        return Err(OwnershipError::ExternalEnvironment);
+    }
+    if record.mode != EnvironmentMode::ExternalSandbox
+        || !target.is_some_and(ExternalSandboxTarget::is_valid)
+    {
+        return Err(OwnershipError::ExternalSandboxTargetRequired);
+    }
+    authorize_action_identity(record, action)
+}
+
+fn authorize_action_identity(
+    record: &EnvironmentRecord,
+    action: DestructiveAction,
+) -> Result<(), OwnershipError> {
     if !matches!(
         record.state,
         EnvironmentState::Ready | EnvironmentState::Error
@@ -120,4 +163,16 @@ pub fn authorize_destructive_action(
         return Err(OwnershipError::ConfirmationRequired);
     }
     Ok(())
+}
+
+fn is_safe_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn is_safe_identity(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }

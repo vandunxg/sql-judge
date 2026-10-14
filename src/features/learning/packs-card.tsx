@@ -1,14 +1,22 @@
-import { useState } from "react"
-import { BookOpen, Check, Copy, Table2 } from "lucide-react"
+import { useRef, useState } from "react"
+import { BookOpen, Check, Copy, Ellipsis, Table2, Trash2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import type { InstalledPack, ManagedEnvironmentSummary } from "@/lib/judge-api"
 
+import { PackDeleteDialog } from "./packs-delete-dialog"
 import type { ProblemStatus } from "./problem-status"
 import {
   packDialectLabel,
   packEnvironmentBadge,
+  packEnvironments,
   packMonogram,
   packProgress,
   packTableCount,
@@ -28,9 +36,12 @@ type PackCardProps = {
   index: number
   statuses: Map<string, Pick<ProblemStatus, "status">> | null
   environments: ManagedEnvironmentSummary[] | null
+  onDeleted: () => void
 }
 
-export function PackCard({ pack, index, statuses, environments }: PackCardProps) {
+export function PackCard({ pack, index, statuses, environments, onDeleted }: PackCardProps) {
+  const [deleting, setDeleting] = useState(false)
+  const menuRef = useRef<HTMLButtonElement>(null)
   const progress = statuses ? packProgress(pack, statuses) : null
   const tables = packTableCount(pack)
   const environment = environments ? packEnvironmentBadge(pack, environments) : null
@@ -54,6 +65,21 @@ export function PackCard({ pack, index, statuses, environments }: PackCardProps)
           </div>
           <p className="truncate font-mono text-[13.5px] text-muted-foreground">{pack.packId}</p>
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            ref={menuRef}
+            aria-label={`More actions for ${pack.title}`}
+            className={buttonVariants({ variant: "ghost", size: "icon", className: "shrink-0" })}
+          >
+            <Ellipsis aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-auto min-w-40">
+            <DropdownMenuItem variant="destructive" onClick={() => setDeleting(true)}>
+              <Trash2 aria-hidden="true" />
+              Delete pack…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="flex flex-wrap gap-x-[18px] gap-y-1.5 text-[13px] text-muted-foreground [&_svg]:size-3.5">
@@ -102,6 +128,18 @@ export function PackCard({ pack, index, statuses, environments }: PackCardProps)
           ) : null}
         </div>
       </div>
+      {deleting ? (
+        <PackDeleteDialog
+          pack={pack}
+          environments={environments ? packEnvironments(pack, environments) : null}
+          returnFocus={menuRef}
+          onCancel={() => setDeleting(false)}
+          onDeleted={() => {
+            setDeleting(false)
+            onDeleted()
+          }}
+        />
+      ) : null}
     </article>
   )
 }

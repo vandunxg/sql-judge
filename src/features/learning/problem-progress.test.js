@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { lastAttemptLabel, problemProgress, progressTotals, relativeTime, submittedAtMs, matchesStatus } from "./problem-progress"
+import { lastAttemptLabel, problemProgress, progressTotals, relativeTime, submittedAtMs, matchesStatus, submissionsOnly } from "./problem-progress"
 
 const NOW = Date.parse("2026-10-14T12:00:00Z")
 const sub = (problemId, verdict, iso, extra = {}) => ({ packId: "hr", packVersion: "1.2.0", packHash: "d1", problemId, verdict, createdAt: iso, ...extra })
@@ -39,6 +39,19 @@ describe("problem progress", () => {
     expect(progress.get(key("hr", "1.2.0", "d1", "c"))).toBeUndefined()
     expect(progress.get(key("hr", "1.2.0", "other", "c"))?.status).toBe("solved")
     expect(progress.get(key("hr", "1.2.0", "d1", "a")).count).toBe(2)
+  })
+
+  test("keeps sample runs out of submission progress", () => {
+    const history = [
+      sub("a", "Accepted", "2026-10-14T11:00:00Z", { mode: "run" }),
+      sub("a", "WrongAnswer", "2026-10-14T10:00:00Z", { mode: "submit" }),
+      sub("b", "Accepted", "2026-10-14T09:00:00Z", { mode: "run" }),
+    ]
+    const submissions = submissionsOnly(history)
+    expect(submissions).toHaveLength(1)
+    const progress = problemProgress(submissions, key)
+    expect(progress.get(key("hr", "1.2.0", "d1", "a"))).toMatchObject({ status: "attempted", count: 1 })
+    expect(progress.get(key("hr", "1.2.0", "d1", "b"))).toBeUndefined()
   })
 
   test("labels the last attempt with a short verdict", () => {

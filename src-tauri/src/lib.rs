@@ -492,6 +492,16 @@ struct SubmissionHistorySummary {
     verdict: String,
     created_at: String,
     problem_id: Option<String>,
+    mode: String,
+    tests: Vec<SubmissionTestSummary>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmissionTestSummary {
+    test_id: String,
+    verdict: String,
+    elapsed_ms: u64,
 }
 
 fn load_environment_state(path: &Path) -> Result<ManagedEnvironmentState, String> {
@@ -2272,38 +2282,38 @@ fn judge_request(
     let verdict = verdict_name(report.verdict).to_owned();
     let (columns, rows) = preview_response(report.preview.as_ref());
     let test_results = judge_test_results(&problem, &report.tests);
-    if expected_mode == "submit" {
-        let tests = report
-            .tests
-            .iter()
-            .map(|test| TestRecord {
-                test_id: test.id.clone(),
-                verdict: verdict_name(test.verdict).to_owned(),
-                elapsed_ms: test.elapsed_ms,
-            })
-            .collect::<Vec<_>>();
-        let submission = SubmissionRecord {
-            submission_id: submission_id(),
-            pack_id: pack.id().to_owned(),
-            pack_version: pack.version().to_owned(),
-            pack_hash: pack.digest().to_owned(),
-            engine_version: "postgresql-managed".to_owned(),
-            policy_version: "policy-v1".to_owned(),
-            verdict: verdict.clone(),
-            created_at: created_at(),
-            problem_id: Some(problem.id.clone()),
+    // ADR-024: sample runs are recorded too, tagged by mode; only IDs, verdicts and timings.
+    let tests = report
+        .tests
+        .iter()
+        .map(|test| TestRecord {
+            test_id: test.id.clone(),
+            verdict: verdict_name(test.verdict).to_owned(),
+            elapsed_ms: test.elapsed_ms,
+        })
+        .collect::<Vec<_>>();
+    let submission = SubmissionRecord {
+        submission_id: submission_id(),
+        pack_id: pack.id().to_owned(),
+        pack_version: pack.version().to_owned(),
+        pack_hash: pack.digest().to_owned(),
+        engine_version: "postgresql-managed".to_owned(),
+        policy_version: "policy-v1".to_owned(),
+        verdict: verdict.clone(),
+        created_at: created_at(),
+        problem_id: Some(problem.id.clone()),
+        mode: expected_mode.to_owned(),
+    };
+    if state.history.save_submission(&submission, &tests).is_err() {
+        return JudgeRunResult {
+            status: "error".to_owned(),
+            verdict: Some("JudgeError".to_owned()),
+            columns: Vec::new(),
+            rows: Vec::new(),
+            duration_ms,
+            message: "Judge completed but history could not be saved.".to_owned(),
+            tests: Vec::new(),
         };
-        if state.history.save_submission(&submission, &tests).is_err() {
-            return JudgeRunResult {
-                status: "error".to_owned(),
-                verdict: Some("JudgeError".to_owned()),
-                columns: Vec::new(),
-                rows: Vec::new(),
-                duration_ms,
-                message: "Submission completed but history could not be saved.".to_owned(),
-                tests: Vec::new(),
-            };
-        }
     }
     JudgeRunResult {
         status: "completed".to_owned(),
@@ -2480,6 +2490,16 @@ fn list_submission_history_value(
                     verdict: record.verdict,
                     created_at: record.created_at,
                     problem_id: record.problem_id,
+                    mode: record.mode,
+                    tests: record
+                        .tests
+                        .into_iter()
+                        .map(|test| SubmissionTestSummary {
+                            test_id: test.test_id,
+                            verdict: test.verdict,
+                            elapsed_ms: test.elapsed_ms,
+                        })
+                        .collect(),
                 })
                 .collect()
         })
@@ -3842,10 +3862,24 @@ mod tests {
             .history
             .list_submissions()
             .expect("list submission history");
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].pack_id, "hr-analytics");
-        assert_eq!(history[0].problem_id.as_deref(), Some("above-average"));
-        assert!(!history[0].pack_hash.is_empty());
+        assert_eq!(history.len(), 2);
+        let run = history
+            .iter()
+            .find(|record| record.mode == "run")
+            .expect("sample run is recorded");
+        let submitted = history
+            .iter()
+            .find(|record| record.mode == "submit")
+            .expect("submission is recorded");
+        for record in [run, submitted] {
+            assert_eq!(record.pack_id, "hr-analytics");
+            assert!(!record.pack_hash.is_empty());
+            assert_eq!(record.problem_id.as_deref(), Some("above-average"));
+        }
+        assert_eq!(run.verdict, "Accepted");
+        assert_eq!(submitted.verdict, "WrongAnswer");
+        assert!(!run.tests.is_empty());
+        assert!(submitted.tests.len() > run.tests.len());
         drop(state_guard);
         drop(state);
         let _ = std::fs::remove_dir_all(root);
@@ -3928,10 +3962,11 @@ mod tests {
         assert_eq!(forged.verdict.as_deref(), Some("PolicyViolation"));
         assert!(forged.tests.is_empty());
         let history = super::list_submission_history_value(&state).expect("history");
-        assert_eq!(history.len(), 1, "forged problem ids are never recorded");
-        assert_eq!(
-            history[0].problem_id.as_deref(),
-            Some("second-highest-salary")
+        assert_eq!(history.len(), 2, "forged problem ids are never recorded");
+        assert!(
+            history
+                .iter()
+                .all(|record| record.problem_id.as_deref() == Some("second-highest-salary"))
         );
         drop(state);
         let _ = std::fs::remove_dir_all(root);
@@ -4057,6 +4092,7 @@ mod tests {
                         verdict: "Accepted".to_owned(),
                         created_at: "2026-10-12T00:00:00Z".to_owned(),
                         problem_id: Some("above-average".to_owned()),
+                        mode: "submit".to_owned(),
                     },
                     &[app_storage::TestRecord {
                         test_id: "basic".to_owned(),
@@ -4149,6 +4185,7 @@ mod tests {
                         verdict: "Accepted".to_owned(),
                         created_at: "2026-10-12T00:00:00Z".to_owned(),
                         problem_id: Some("above-average".to_owned()),
+                        mode: "submit".to_owned(),
                     },
                     &[app_storage::TestRecord {
                         test_id: "basic".to_owned(),
@@ -4419,12 +4456,78 @@ mod tests {
                     verdict: "Accepted".to_owned(),
                     created_at: "2026-10-12T00:00:00Z".to_owned(),
                     problem_id: Some("above-average".to_owned()),
+                    mode: "submit".to_owned(),
                 },
                 &[],
             )
             .expect("save oversized submission");
         drop(history);
         assert!(app_storage::export_backup(&path).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn submission_history_lists_problem_mode_and_tests_in_camel_case() {
+        let root = std::env::temp_dir().join(format!(
+            "sql-judge-tauri-history-shape-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).expect("create test root");
+        let state = Mutex::new(
+            load_environment_state(&root.join("state.sqlite")).expect("load native state"),
+        );
+        state
+            .lock()
+            .expect("lock history state")
+            .history
+            .save_submission(
+                &app_storage::SubmissionRecord {
+                    submission_id: "run-1".to_owned(),
+                    pack_id: "hr-analytics".to_owned(),
+                    pack_version: "1.0.0".to_owned(),
+                    pack_hash: "a".repeat(64),
+                    engine_version: "postgresql-managed".to_owned(),
+                    policy_version: "policy-v1".to_owned(),
+                    verdict: "WrongAnswer".to_owned(),
+                    created_at: "1760000000".to_owned(),
+                    problem_id: Some("above-average".to_owned()),
+                    mode: "run".to_owned(),
+                },
+                &[app_storage::TestRecord {
+                    test_id: "visible-example".to_owned(),
+                    verdict: "WrongAnswer".to_owned(),
+                    elapsed_ms: 6,
+                }],
+            )
+            .expect("save sample run");
+
+        let history = super::list_submission_history_value(&state).expect("list history");
+
+        assert_eq!(
+            serde_json::to_value(&history).expect("encode history"),
+            serde_json::json!([{
+                "submissionId": "run-1",
+                "packId": "hr-analytics",
+                "packVersion": "1.0.0",
+                "packHash": "a".repeat(64),
+                "engineVersion": "postgresql-managed",
+                "policyVersion": "policy-v1",
+                "verdict": "WrongAnswer",
+                "createdAt": "1760000000",
+                "problemId": "above-average",
+                "mode": "run",
+                "tests": [{
+                    "testId": "visible-example",
+                    "verdict": "WrongAnswer",
+                    "elapsedMs": 6
+                }]
+            }])
+        );
+        drop(state);
         let _ = std::fs::remove_dir_all(root);
     }
 

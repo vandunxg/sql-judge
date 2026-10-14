@@ -8,6 +8,8 @@ import {
   Package,
   Plug,
   Search,
+  Settings2,
+  Table,
   type LucideIcon,
 } from "lucide-react"
 
@@ -25,6 +27,8 @@ export type AppRoute =
   | "progress"
   | "packs"
   | "connections"
+  | "explorer"
+  | "settings"
 
 type NavigationItem = {
   route: AppRoute
@@ -51,6 +55,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     items: [
       { route: "environments", label: "Environments", icon: Database },
       { route: "connections", label: "Connections", icon: Plug },
+      { route: "explorer", label: "Explorer", icon: Table },
     ],
   },
 ]
@@ -116,16 +121,22 @@ export function AppSidebar({
           ))}
         </div>
         <div className="flex-1" />
-        <a
-          href="#environments"
-          className={cn("flex items-start gap-2.5 rounded-lg px-2.5 py-2 hover:bg-hover", focusRing)}
-        >
-          <span className={cn("mt-[7px] size-2 shrink-0 rounded-full", runtimeDots[indicator.tone])} aria-hidden="true" />
-          <span className="flex flex-col leading-[1.35]">
-            <span className="text-[13px] font-medium">{indicator.label}</span>
-            <span className="text-xs text-muted-foreground">{indicator.detail}</span>
-          </span>
-        </a>
+        <div className="flex flex-col gap-0.5">
+          <a
+            href="#environments"
+            className={cn("flex items-start gap-2.5 rounded-lg px-2.5 py-2 hover:bg-hover", focusRing)}
+          >
+            <span className={cn("mt-[7px] size-2 shrink-0 rounded-full", runtimeDots[indicator.tone])} aria-hidden="true" />
+            <span className="flex flex-col leading-[1.35]">
+              <span className="text-[13px] font-medium">{indicator.label}</span>
+              <span className="text-xs text-muted-foreground">{indicator.detail}</span>
+            </span>
+          </a>
+          <NavLink
+            item={{ route: "settings", label: "Settings", icon: Settings2 }}
+            active={activeRoute === "settings"}
+          />
+        </div>
       </nav>
     </Sidebar>
   )

@@ -1,5 +1,5 @@
 use environment_manager::{EnvironmentMode, EnvironmentRecord, EnvironmentState};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::Path;
@@ -32,6 +32,8 @@ pub struct SubmissionRecord {
     pub created_at: String,
     /// Exact problem ID inside the pack; `None` for submissions recorded before ADR-023.
     pub problem_id: Option<String>,
+    /// `run` for a sample run or `submit` for a full submission (ADR-024).
+    pub mode: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +71,8 @@ pub struct SubmissionSummary {
     pub verdict: String,
     pub created_at: String,
     pub problem_id: Option<String>,
+    pub mode: String,
+    pub tests: Vec<TestRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +124,9 @@ pub struct BackupSubmission {
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem_id: Option<String>,
+    /// Absent means `submit`, so submit-only snapshots serialize exactly as before (ADR-024).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     pub tests: Vec<BackupTest>,
 }
 
@@ -132,6 +139,7 @@ pub struct BackupTest {
 }
 
 const BACKUP_VERSION: u32 = 2;
+const SUBMISSION_COLUMNS: &str = "submission_id, pack_id, pack_version, pack_hash, engine_version, policy_version, verdict, created_at, problem_id, mode";
 pub const MAX_BACKUP_BYTES: usize = 4 * 1024 * 1024;
 
 struct BackupSizeGuard {
@@ -809,11 +817,16 @@ fn decode_environment(
     })
 }
 
-fn migrate_environment_identity_columns(connection: &Connection) -> Result<(), StorageError> {
-    let mut statement = connection.prepare("PRAGMA table_info(environment_ledger)")?;
+fn table_columns(connection: &Connection, table: &str) -> Result<Vec<String>, StorageError> {
+    let mut statement = connection.prepare("SELECT name FROM pragma_table_info(?1)")?;
     let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))?
+        .query_map([table], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
+    Ok(columns)
+}
+
+fn migrate_environment_identity_columns(connection: &Connection) -> Result<(), StorageError> {
+    let columns = table_columns(connection, "environment_ledger")?;
     if !columns.iter().any(|column| column == "pack_version") {
         connection.execute(
             "ALTER TABLE environment_ledger ADD COLUMN pack_version TEXT NOT NULL DEFAULT ''",
@@ -829,23 +842,12 @@ fn migrate_environment_identity_columns(connection: &Connection) -> Result<(), S
     Ok(())
 }
 
-/// ADR-023: additive nullable column; legacy submissions keep `NULL`.
-fn migrate_submission_problem_column(connection: &Connection) -> Result<(), StorageError> {
-    let mut statement = connection.prepare("PRAGMA table_info(submissions)")?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    if !columns.iter().any(|column| column == "problem_id") {
-        connection.execute("ALTER TABLE submissions ADD COLUMN problem_id TEXT", [])?;
-    }
-    Ok(())
-}
-
 impl HistoryStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.execute_batch(
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_version (
                  version INTEGER PRIMARY KEY CHECK (version = 1)
              );
@@ -869,7 +871,8 @@ impl HistoryStore {
              );
              CREATE INDEX IF NOT EXISTS idx_submissions_created_at ON submissions(created_at);",
         )?;
-        migrate_submission_problem_column(&connection)?;
+        migrate_submission_tracking_columns(&transaction)?;
+        transaction.commit()?;
         Ok(Self { connection })
     }
 
@@ -879,82 +882,58 @@ impl HistoryStore {
         tests: &[TestRecord],
     ) -> Result<(), StorageError> {
         validate_submission(submission)?;
-        for test in tests {
-            if test.test_id.trim().is_empty() || test.verdict.trim().is_empty() {
-                return Err(StorageError::InvalidRecord("test fields must be non-empty"));
-            }
-        }
-
+        tests.iter().try_for_each(validate_test)?;
         let transaction = self.connection.transaction()?;
-        transaction.execute(
-            "INSERT INTO submissions (
-                 submission_id, pack_id, pack_version, pack_hash,
-                 engine_version, policy_version, verdict, created_at, problem_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                submission.submission_id,
-                submission.pack_id,
-                submission.pack_version,
-                submission.pack_hash,
-                submission.engine_version,
-                submission.policy_version,
-                submission.verdict,
-                submission.created_at,
-                submission.problem_id,
-            ],
-        )?;
-        for test in tests {
-            let elapsed_ms = i64::try_from(test.elapsed_ms)
-                .map_err(|_| StorageError::InvalidRecord("elapsed time is too large"))?;
-            transaction.execute(
-                "INSERT INTO submission_tests (submission_id, test_id, verdict, elapsed_ms)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    submission.submission_id,
-                    test.test_id,
-                    test.verdict,
-                    elapsed_ms,
-                ],
-            )?;
-        }
+        insert_submission(&transaction, submission, tests)?;
         transaction.commit()?;
         Ok(())
     }
 
     pub fn list_submissions(&self) -> Result<Vec<SubmissionSummary>, StorageError> {
+        let mut tests = std::collections::BTreeMap::<String, Vec<TestRecord>>::new();
         let mut statement = self.connection.prepare(
-            "SELECT submission_id, pack_id, pack_version, pack_hash,
-                    engine_version, policy_version, verdict, created_at, problem_id
-             FROM submissions ORDER BY created_at DESC, submission_id DESC",
+            "SELECT submission_id, test_id, verdict, elapsed_ms
+             FROM submission_tests ORDER BY submission_id, test_id",
         )?;
         let rows = statement.query_map([], |row| {
-            Ok(SubmissionSummary {
-                submission_id: row.get(0)?,
-                pack_id: row.get(1)?,
-                pack_version: row.get(2)?,
-                pack_hash: row.get(3)?,
-                engine_version: row.get(4)?,
-                policy_version: row.get(5)?,
-                verdict: row.get(6)?,
-                created_at: row.get(7)?,
-                problem_id: row.get(8)?,
-            })
+            Ok((row.get::<_, String>(0)?, decode_test(row, 1)?))
         })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StorageError::from)
+        for row in rows {
+            let (submission_id, test) = row?;
+            tests.entry(submission_id).or_default().push(test);
+        }
+
+        let mut submissions = Vec::new();
+        self.for_each_submission(|submission| {
+            let tests = tests.remove(&submission.submission_id).unwrap_or_default();
+            submissions.push(SubmissionSummary {
+                submission_id: submission.submission_id,
+                pack_id: submission.pack_id,
+                pack_version: submission.pack_version,
+                pack_hash: submission.pack_hash,
+                engine_version: submission.engine_version,
+                policy_version: submission.policy_version,
+                verdict: submission.verdict,
+                created_at: submission.created_at,
+                problem_id: submission.problem_id,
+                mode: submission.mode,
+                tests,
+            });
+            Ok(())
+        })?;
+        Ok(submissions)
     }
 
     pub fn for_each_submission<F>(&self, mut visit: F) -> Result<(), StorageError>
     where
-        F: FnMut(SubmissionSummary) -> Result<(), StorageError>,
+        F: FnMut(SubmissionRecord) -> Result<(), StorageError>,
     {
-        let mut statement = self.connection.prepare(
-            "SELECT submission_id, pack_id, pack_version, pack_hash,
-                    engine_version, policy_version, verdict, created_at, problem_id
-             FROM submissions ORDER BY created_at DESC, submission_id DESC",
-        )?;
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {SUBMISSION_COLUMNS}
+             FROM submissions ORDER BY created_at DESC, submission_id DESC"
+        ))?;
         let rows = statement.query_map([], |row| {
-            Ok(SubmissionSummary {
+            Ok(SubmissionRecord {
                 submission_id: row.get(0)?,
                 pack_id: row.get(1)?,
                 pack_version: row.get(2)?,
@@ -964,6 +943,7 @@ impl HistoryStore {
                 verdict: row.get(6)?,
                 created_at: row.get(7)?,
                 problem_id: row.get(8)?,
+                mode: row.get(9)?,
             })
         })?;
         for row in rows {
@@ -992,13 +972,7 @@ impl HistoryStore {
             "SELECT test_id, verdict, elapsed_ms
              FROM submission_tests WHERE submission_id = ?1 ORDER BY test_id",
         )?;
-        let rows = statement.query_map([submission_id], |row| {
-            Ok(TestRecord {
-                test_id: row.get(0)?,
-                verdict: row.get(1)?,
-                elapsed_ms: row.get::<_, i64>(2)? as u64,
-            })
-        })?;
+        let rows = statement.query_map([submission_id], |row| decode_test(row, 0))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StorageError::from)
     }
@@ -1018,13 +992,7 @@ impl HistoryStore {
             "SELECT test_id, verdict, elapsed_ms
              FROM submission_tests WHERE submission_id = ?1 ORDER BY test_id",
         )?;
-        let rows = statement.query_map([submission_id], |row| {
-            Ok(TestRecord {
-                test_id: row.get(0)?,
-                verdict: row.get(1)?,
-                elapsed_ms: row.get::<_, i64>(2)? as u64,
-            })
-        })?;
+        let rows = statement.query_map([submission_id], |row| decode_test(row, 0))?;
         for row in rows {
             visit(row?)?;
         }
@@ -1081,6 +1049,7 @@ pub fn export_backup(path: impl AsRef<Path>) -> Result<BackupSnapshot, StorageEr
             verdict: submission.verdict.clone(),
             created_at: submission.created_at.clone(),
             problem_id: submission.problem_id.clone(),
+            mode: (submission.mode != "submit").then(|| submission.mode.clone()),
             tests: Vec::new(),
         };
         let base_size = serialized_size(&base)?;
@@ -1132,6 +1101,7 @@ pub fn export_backup(path: impl AsRef<Path>) -> Result<BackupSnapshot, StorageEr
             verdict: base.verdict,
             created_at: base.created_at,
             problem_id: base.problem_id,
+            mode: base.mode,
             tests,
         });
         Ok(())
@@ -1193,6 +1163,7 @@ pub fn restore_backup(
             verdict: backup.verdict.clone(),
             created_at: backup.created_at.clone(),
             problem_id: backup.problem_id.clone(),
+            mode: backup.mode.clone().unwrap_or_else(|| "submit".to_owned()),
         };
         validate_submission(&submission)?;
         if !submission_ids.insert(submission.submission_id.clone()) {
@@ -1207,9 +1178,7 @@ pub fn restore_backup(
                     verdict: test.verdict.clone(),
                     elapsed_ms: test.elapsed_ms,
                 };
-                if test.test_id.trim().is_empty() || test.verdict.trim().is_empty() {
-                    return Err(StorageError::InvalidRecord("test fields must be non-empty"));
-                }
+                validate_test(&test)?;
                 Ok(test)
             })
             .collect::<Result<Vec<_>, StorageError>>()?;
@@ -1251,6 +1220,7 @@ pub fn restore_backup(
         ));
     }
 
+    drop(HistoryStore::open(&path)?);
     let connection = Connection::open(path)?;
     let transaction = connection.unchecked_transaction()?;
     transaction.execute_batch(
@@ -1281,37 +1251,7 @@ pub fn restore_backup(
         )?;
     }
     for (submission, tests) in submissions {
-        transaction.execute(
-            "INSERT INTO submissions (
-                 submission_id, pack_id, pack_version, pack_hash,
-                 engine_version, policy_version, verdict, created_at, problem_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                submission.submission_id,
-                submission.pack_id,
-                submission.pack_version,
-                submission.pack_hash,
-                submission.engine_version,
-                submission.policy_version,
-                submission.verdict,
-                submission.created_at,
-                submission.problem_id,
-            ],
-        )?;
-        for test in tests {
-            let elapsed_ms = i64::try_from(test.elapsed_ms)
-                .map_err(|_| StorageError::InvalidRecord("elapsed time is too large"))?;
-            transaction.execute(
-                "INSERT INTO submission_tests (submission_id, test_id, verdict, elapsed_ms)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    submission.submission_id,
-                    test.test_id,
-                    test.verdict,
-                    elapsed_ms
-                ],
-            )?;
-        }
+        insert_submission(&transaction, &submission, &tests)?;
     }
     transaction.commit()?;
     Ok(())
@@ -1328,10 +1268,12 @@ fn validate_submission(submission: &SubmissionRecord) -> Result<(), StorageError
         (&submission.verdict, "verdict"),
         (&submission.created_at, "created at"),
     ];
-    fields
-        .iter()
-        .find(|(value, _)| value.trim().is_empty())
-        .map_or(Ok(()), |(_, field)| Err(StorageError::InvalidRecord(field)))?;
+    if let Some((_, field)) = fields.iter().find(|(value, _)| value.trim().is_empty()) {
+        return Err(StorageError::InvalidRecord(field));
+    }
+    if !matches!(submission.mode.as_str(), "run" | "submit") {
+        return Err(StorageError::InvalidRecord("mode"));
+    }
     if submission
         .problem_id
         .as_deref()
@@ -1351,4 +1293,77 @@ fn is_problem_id(value: &str) -> bool {
         && value.chars().all(|character| {
             character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
         })
+}
+
+fn validate_test(test: &TestRecord) -> Result<(), StorageError> {
+    if test.test_id.trim().is_empty() || test.verdict.trim().is_empty() {
+        return Err(StorageError::InvalidRecord("test fields must be non-empty"));
+    }
+    Ok(())
+}
+
+fn decode_test(row: &Row<'_>, offset: usize) -> rusqlite::Result<TestRecord> {
+    Ok(TestRecord {
+        test_id: row.get(offset)?,
+        verdict: row.get(offset + 1)?,
+        elapsed_ms: row.get::<_, i64>(offset + 2)? as u64,
+    })
+}
+
+fn insert_submission(
+    connection: &Connection,
+    submission: &SubmissionRecord,
+    tests: &[TestRecord],
+) -> Result<(), StorageError> {
+    connection.execute(
+        &format!(
+            "INSERT INTO submissions ({SUBMISSION_COLUMNS})
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+        ),
+        params![
+            submission.submission_id,
+            submission.pack_id,
+            submission.pack_version,
+            submission.pack_hash,
+            submission.engine_version,
+            submission.policy_version,
+            submission.verdict,
+            submission.created_at,
+            submission.problem_id,
+            submission.mode,
+        ],
+    )?;
+    for test in tests {
+        let elapsed_ms = i64::try_from(test.elapsed_ms)
+            .map_err(|_| StorageError::InvalidRecord("elapsed time is too large"))?;
+        connection.execute(
+            "INSERT INTO submission_tests (submission_id, test_id, verdict, elapsed_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                submission.submission_id,
+                test.test_id,
+                test.verdict,
+                elapsed_ms
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// Adds `problem_id` (ADR-023) and `mode` (ADR-024) to `submissions` created before they
+/// existed. Runs inside the caller's IMMEDIATE transaction so concurrent openers cannot both
+/// add the same column.
+fn migrate_submission_tracking_columns(connection: &Connection) -> Result<(), StorageError> {
+    let columns = table_columns(connection, "submissions")?;
+    if !columns.iter().any(|column| column == "problem_id") {
+        connection.execute("ALTER TABLE submissions ADD COLUMN problem_id TEXT", [])?;
+    }
+    if !columns.iter().any(|column| column == "mode") {
+        connection.execute(
+            "ALTER TABLE submissions ADD COLUMN mode TEXT NOT NULL DEFAULT 'submit'
+                 CHECK (mode IN ('run', 'submit'))",
+            [],
+        )?;
+    }
+    Ok(())
 }

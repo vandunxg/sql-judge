@@ -8,6 +8,8 @@ const directRoutes: AppRoute[] = [
   "progress",
   "packs",
   "connections",
+  "explorer",
+  "settings",
 ]
 
 export function routeForLaunch(hash = ""): AppRoute {
@@ -15,11 +17,22 @@ export function routeForLaunch(hash = ""): AppRoute {
 }
 
 export function routeForHash(hash: string): AppRoute {
-  const route = hash.slice(1)
-  if ((directRoutes as string[]).includes(route)) {
-    return route as AppRoute
+  return parseHash(hash).route
+}
+
+// Problem keys are URI-encoded, so the first `?` always starts the query string.
+export function parseHash(hash: string): { route: AppRoute; params: URLSearchParams } {
+  const [path, query = ""] = hash.replace(/^#/, "").split("?", 2)
+  const params = new URLSearchParams(query)
+  if ((directRoutes as string[]).includes(path)) {
+    return { route: path as AppRoute, params }
   }
-  return route.startsWith("solve/") && route.length > "solve/".length
-    ? "solve"
-    : "home"
+  return {
+    route: path.startsWith("solve/") && path.length > "solve/".length ? "solve" : "home",
+    params,
+  }
+}
+
+export function problemHref(problemKey: string) {
+  return `#solve/${encodeURIComponent(problemKey)}`
 }

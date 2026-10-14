@@ -197,6 +197,12 @@ export type DeleteManagedEnvironmentRequest = {
   confirmed: boolean
 }
 
+export type SubmissionTestSummary = {
+  testId: string
+  verdict: string
+  elapsedMs: number
+}
+
 export type SubmissionHistorySummary = {
   submissionId: string
   packId: string
@@ -207,6 +213,9 @@ export type SubmissionHistorySummary = {
   policyVersion: string
   verdict: string
   createdAt: string
+  /** Records saved before run tracking existed are submissions. */
+  mode: "run" | "submit"
+  tests: SubmissionTestSummary[]
 }
 
 export type PackImportResult = {
@@ -239,6 +248,10 @@ export type BackupSnapshot = {
     policyVersion: string
     verdict: string
     createdAt: string
+    /** Omitted for submissions recorded before problem tracking existed. */
+    problemId?: string
+    /** Omitted means "submit"; only sample runs carry it. */
+    mode?: "run"
     tests: Array<{
       testId: string
       verdict: string

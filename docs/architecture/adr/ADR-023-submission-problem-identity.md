@@ -1,6 +1,6 @@
 # ADR-023: Problem Identity on Submissions and Per-Fixture Judge Results
 
-Status: Accepted
+Status: Accepted (amended by ADR-024: sample runs are recorded with `mode`)
 
 ## Context
 

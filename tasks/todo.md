@@ -54,7 +54,7 @@ Unchecked items below remain planned or partially verified. Do not mark done wit
 
 ## P4 — Platform delivery and optional expansion
 
-- [ ] **T23 — Review existing GitHub release matrix**; Dep: T01; AC-022. Preserve six selected artifacts, audit scripts, secrets and package manager use. **Verify:** workflow diff reviewed; actual runner log/artifacts archived.
+- [ ] **T23 — Review existing GitHub release matrix**; Dep: T01; AC-022. Preserve six selected artifacts, audit scripts, secrets and package manager use. **Verify:** workflow diff reviewed; actual runner log/artifacts archived. Progress: Windows release now builds SQLite through `rusqlite`'s `bundled` feature after CI failed to locate `sqlite3.lib`; the Windows job checks that configuration before packaging. A fresh Windows runner build remains required.
 - [ ] **T36 — Verified Linux curl installer**; Dep: T23; REQ-026/AC-024. Publish Linux checksums, install Debian-family DEB or fallback AppImage on x86_64, and document explicit `--system`/`--user` sudo boundaries. **Verify:** `bash scripts/test_install_linux.sh`, `bash scripts/test_release_workflow.sh`, and a real GitHub Actions release/install smoke test; remains pending until CI produces the first checksum asset.
 - [ ] **T24 — Managed PG runtime packaging decision/prototype**; Dep: T14/T23; AC-016/022. Source/license/signing/process/data-dir plan by OS. **Verify:** run on clean machine or VM and expose failures honestly.
 - [ ] **T25 — Platform release smoke tests**; Dep: T24; AC-022. Test NSIS, Portable, arm64 DMG, Intel DMG, AppImage, DEB independently. **Verify:** artifact install/launch/judge or clearly documented runtime prerequisite; do not claim untested platform support.

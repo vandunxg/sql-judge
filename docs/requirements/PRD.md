@@ -60,6 +60,7 @@ Standalone desktop learning environment for developers studying PostgreSQL / T-S
 | REQ-023 | LATER | Bundled managed PostgreSQL per OS release asset with startup/shutdown/update mechanics. |
 | REQ-024 | LATER | SQL Server judge for disposable managed SQL Server test environments. |
 | REQ-025 | MUST | UI implementation must reproduce the matching artboard's declared tokens, layout, typography, spacing, radii, borders, shadows, interaction states and empty/loading/error states through the existing React component system. Exported HTML and vendor runtime are reference material only. |
+| REQ-026 | MUST | Linux release provides a documented one-command installer that downloads only from the official GitHub release, verifies a published SHA-256 checksum before installation, supports Debian-family DEB and other Linux AppImage fallback on x86_64, and uses sudo only for explicit system installation. |
 
 ## 5. Nonfunctional requirements / target budgets (validate on target machines)
 | ID | Objective | Verification |

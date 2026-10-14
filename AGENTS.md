@@ -40,6 +40,7 @@ If docs conflict: explicit current user instruction > accepted PRD/AC > contract
 - NEVER dynamically execute user text with admin/provisioner credentials. Parser/regex/`READ ONLY` are defense-in-depth, not a sandbox.
 - Require managed ownership marker + scoped resource ID + displayed impact summary + explicit confirmation for destructive lifecycle actions; verify ownership again in Rust after the UI click. Fail closed.
 - No default connection to production or real business data, no implicit external schema creation, no automatic probe that writes or alters data.
+- Linux installer downloads only from the official release, verifies the published SHA-256 manifest before mutation, supports x86_64 only until other artifacts are verified, and must not run the entire installer as root.
 - No plaintext secrets in SQLite, JSON, frontend storage, logs, crash reports or commit. Use OS credential vault or prompt per session; TLS verification on external connections.
 - Limit CPU/time/memory/rows/result bytes; cancel and clean up after interruptions; do not silently turn infrastructure failure into Wrong Answer.
 - Untrusted pack imports must reject path traversal, symlinks, zip bombs, invalid manifests, unexpected paths, excessive SQL and unsafe setup. Imports cannot modify user external DBs.
@@ -53,6 +54,7 @@ If docs conflict: explicit current user instruction > accepted PRD/AC > contract
 - No `#[allow(...)]`, `@ts-ignore`, eslint-disable, skipped tests, coverage reductions or fake verification without explicit justified review.
 - New dependency / workflow / migration / capability changes require a short decision record and review; do not pin arbitrary versions from memory.
 - No rewrite of generated `release.yml` or claimed successful six-platform packaging until actual matrix builds were run with PostgreSQL runtime included or explicitly documented as external prerequisite.
+- Release documentation must distinguish Tauri artifact packaging from PostgreSQL runtime installation; a checksum-verified installer is not evidence that the database runtime is bundled.
 - Never quietly lower thresholds to get green. Never claim test/build success without command output.
 
 ## UI design fidelity

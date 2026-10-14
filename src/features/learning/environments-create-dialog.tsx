@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type RefObject } from "react"
 import { Check, Plus, ShieldCheck } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -10,7 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { probeExternalSandboxProfile, type ConnectionProfileSummary, type InstalledPack } from "@/lib/judge-api"
+import {
+  probeExternalSandboxProfile,
+  type ConnectionProfileSummary,
+  type InstalledPack,
+} from "@/lib/judge-api"
 import { readExternalError } from "@/lib/external-errors"
 import {
   DIALOG_FIELD_CLASS,
@@ -64,7 +69,9 @@ export function EnvironmentCreateDialog({
       ? probeResult
       : null
   const probeError =
-    probeResult?.profileId === selectedProfileId ? probeResult.error ?? null : null
+    probeResult?.profileId === selectedProfileId
+      ? (probeResult.error ?? null)
+      : null
   const probing = Boolean(selectedProfileId && !probe && !probeError)
 
   useEffect(() => {
@@ -75,7 +82,10 @@ export function EnvironmentCreateDialog({
     void probeExternalSandboxProfile(selectedProfileId)
       .then((target) => {
         if (active) {
-          setProbeResult({ profileId: selectedProfileId, database: target.database })
+          setProbeResult({
+            profileId: selectedProfileId,
+            database: target.database,
+          })
         }
       })
       .catch((reason) => {
@@ -124,11 +134,22 @@ export function EnvironmentCreateDialog({
       >
         <div className="flex flex-col gap-2 text-sm">
           <label htmlFor={packId}>Pack</label>
-          <Select value={selectedKey} onValueChange={(value) => value && setSelectedKey(value)}>
-            <SelectTrigger id={packId} disabled={busy || packs.length === 0} className="w-full">
-              <SelectValue>{() => pack ? `${pack.title} ${pack.version}` : "No imported packs"}</SelectValue>
+          <Select
+            value={selectedKey}
+            onValueChange={(value) => value && setSelectedKey(value)}
+          >
+            <SelectTrigger
+              id={packId}
+              disabled={busy || packs.length === 0}
+              className="w-full"
+            >
+              <SelectValue>
+                {() =>
+                  pack ? `${pack.title} ${pack.version}` : "No imported packs"
+                }
+              </SelectValue>
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent align="start" alignItemWithTrigger={false}>
               {packs.map((candidate) => (
                 <SelectItem key={packKey(candidate)} value={packKey(candidate)}>
                   {candidate.title} {candidate.version}
@@ -149,13 +170,22 @@ export function EnvironmentCreateDialog({
               }
             }}
           >
-            <SelectTrigger disabled={busy || eligibleProfiles.length === 0} className="w-full">
-              <SelectValue>{() => {
-                const profile = eligibleProfiles.find((candidate) => candidate.profileId === selectedProfileId)
-                return profile ? `${profile.displayName} · ${profile.database}` : "No saved PostgreSQL profile with a stored secret"
-              }}</SelectValue>
+            <SelectTrigger
+              disabled={busy || eligibleProfiles.length === 0}
+              className="w-full"
+            >
+              <SelectValue>
+                {() => {
+                  const profile = eligibleProfiles.find(
+                    (candidate) => candidate.profileId === selectedProfileId
+                  )
+                  return profile
+                    ? `${profile.displayName} · ${profile.database}`
+                    : "No saved PostgreSQL profile with a stored secret"
+                }}
+              </SelectValue>
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent align="start" alignItemWithTrigger={false}>
               {eligibleProfiles.map((profile) => (
                 <SelectItem key={profile.profileId} value={profile.profileId}>
                   {profile.displayName} · {profile.database}
@@ -163,9 +193,21 @@ export function EnvironmentCreateDialog({
               ))}
             </SelectContent>
           </Select>
-          {probing ? <p className="text-[13px] text-muted-foreground" role="status">Verifying writable sandbox target...</p> : null}
-          {probeError ? <p className="text-[13px] text-err" role="alert">{probeError}</p> : null}
-          {probe ? <p className="text-[13px] text-ok" role="status">Verified PostgreSQL target: {probe.database}</p> : null}
+          {probing ? (
+            <p className="text-[13px] text-muted-foreground" role="status">
+              Verifying writable sandbox target...
+            </p>
+          ) : null}
+          {probeError ? (
+            <p className="text-[13px] text-err" role="alert">
+              {probeError}
+            </p>
+          ) : null}
+          {probe ? (
+            <p className="text-[13px] text-ok" role="status">
+              Verified PostgreSQL target: {probe.database}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-col gap-2 text-sm">
           <label htmlFor={environmentFieldId}>Environment ID</label>
@@ -196,7 +238,9 @@ export function EnvironmentCreateDialog({
             </span>
           </ImpactItem>
           <ImpactItem icon={<ShieldCheck className="text-ok" />} label="Target">
-            {probe ? `PostgreSQL database ${probe.database}` : "verified before creation"}
+            {probe
+              ? `PostgreSQL database ${probe.database}`
+              : "verified before creation"}
           </ImpactItem>
           <ImpactItem icon={<Check className="text-ok" />} label="Not affected">
             submission history, other schemas, your external connections
@@ -208,13 +252,13 @@ export function EnvironmentCreateDialog({
           </p>
         ) : null}
         <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={confirmed}
-            onChange={(event) => setConfirmed(event.target.checked)}
+            onCheckedChange={(checked) => setConfirmed(checked === true)}
             disabled={busy || !probe}
           />
-          I understand SQL Judge will create only a generated, marker-owned schema in this verified database.
+          I understand SQL Judge will create only a generated, marker-owned
+          schema in this verified database.
         </label>
         <div className="flex flex-wrap justify-end gap-2">
           <Button
@@ -225,7 +269,10 @@ export function EnvironmentCreateDialog({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={busy || !pack || !probe || probing || !confirmed}>
+          <Button
+            type="submit"
+            disabled={busy || !pack || !probe || probing || !confirmed}
+          >
             Create environment
           </Button>
         </div>

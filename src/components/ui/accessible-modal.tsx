@@ -3,17 +3,21 @@ import {
   useId,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
 } from "react"
 import { createPortal } from "react-dom"
+import { X } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 import {
   nextModalFocusIndex,
   selectModalInitialFocus,
   shouldFocusModalContainer,
   shouldDismissModalOnEscape,
 } from "@/lib/modal-a11y"
+import { cn } from "@/lib/utils"
 
 const FOCUSABLE_SELECTOR =
   'a[href], area[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -31,6 +35,11 @@ export function AccessibleModal({
   restoreFocusRef,
   onCancel,
   children,
+  className,
+  headerClassName,
+  showCloseButton = false,
+  closeLabel = "Close",
+  role = "alertdialog",
 }: {
   open: boolean
   title: ReactNode
@@ -40,6 +49,11 @@ export function AccessibleModal({
   restoreFocusRef?: RefObject<HTMLElement | null>
   onCancel: () => void
   children: ReactNode
+  className?: string
+  headerClassName?: string
+  showCloseButton?: boolean
+  closeLabel?: string
+  role?: "dialog" | "alertdialog"
 }) {
   const dialogRef = useRef<HTMLElement>(null)
   const titleId = useId()
@@ -145,16 +159,28 @@ export function AccessibleModal({
     focusable[nextIndex]?.focus()
   }
 
+  function handleOverlayPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!busy && event.target === event.currentTarget) {
+      onCancel()
+    }
+  }
+
   if (!open || typeof document === "undefined") {
     return null
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      onPointerDown={handleOverlayPointerDown}
+    >
       <section
         ref={dialogRef}
-        className="w-full max-w-md rounded-lg border border-amber-500/40 bg-background p-4 shadow-lg"
-        role="alertdialog"
+        className={cn(
+          "w-full max-w-md rounded-lg border border-amber-500/40 bg-background p-4 shadow-lg",
+          className
+        )}
+        role={role}
         aria-modal="true"
         aria-busy={busy}
         aria-labelledby={titleId}
@@ -162,15 +188,36 @@ export function AccessibleModal({
         tabIndex={-1}
         onKeyDown={handleKeyDown}
       >
-        <h2 id={titleId} className="text-sm font-semibold">
-          {title}
-        </h2>
-        <p
-          id={descriptionId}
-          className="mt-1 text-xs leading-5 text-muted-foreground"
+        <header
+          className={cn(
+            "flex items-start justify-between gap-4",
+            headerClassName
+          )}
         >
-          {description}
-        </p>
+          <div className="min-w-0">
+            <h2 id={titleId} className="text-base leading-6 font-semibold">
+              {title}
+            </h2>
+            <p
+              id={descriptionId}
+              className="mt-1.5 text-[13px] leading-5 text-muted-foreground"
+            >
+              {description}
+            </p>
+          </div>
+          {showCloseButton ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={closeLabel}
+              onClick={onCancel}
+              disabled={busy}
+            >
+              <X />
+            </Button>
+          ) : null}
+        </header>
         {children}
       </section>
     </div>,

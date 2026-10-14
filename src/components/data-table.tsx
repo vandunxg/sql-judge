@@ -566,7 +566,7 @@ export function DataTable({
                 <SelectTrigger size="sm" className="w-20" id="rows-per-page">
                   <SelectValue placeholder={table.state.pagination.pageSize} />
                 </SelectTrigger>
-                <SelectContent side="top">
+                <SelectContent>
                   <SelectGroup>
                     {[10, 20, 30, 40, 50].map((pageSize) => (
                       <SelectItem key={pageSize} value={`${pageSize}`}>

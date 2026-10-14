@@ -1,8 +1,50 @@
-import type { InstalledPack, ManagedEnvironmentSummary } from "@/lib/judge-api"
+import type {
+  ConnectionProfileSummary,
+  InstalledPack,
+  ManagedEnvironmentSummary,
+} from "@/lib/judge-api"
 
 export type EnvironmentTone = "ok" | "info" | "warn" | "err"
 
 const MAX_NAMESPACE_LENGTH = 63
+
+export function postgresqlProfiles(
+  profiles: ConnectionProfileSummary[]
+): ConnectionProfileSummary[] {
+  return profiles.filter((profile) => profile.engine === "postgresql")
+}
+
+export function environmentSourceLabel(
+  profileId: string | null,
+  profiles: ConnectionProfileSummary[]
+): string {
+  if (!profileId) {
+    return "Local runtime"
+  }
+  return (
+    profiles.find((profile) => profile.profileId === profileId)?.displayName ??
+    "External PostgreSQL"
+  )
+}
+
+export function isCurrentEnvironmentLoad(
+  loadId: number,
+  currentLoadId: number
+): boolean {
+  return loadId === currentLoadId
+}
+
+export function environmentProfileSelection(
+  selectedProfileId: string | null,
+  profiles: ConnectionProfileSummary[]
+): string | null {
+  if (!selectedProfileId) {
+    return null
+  }
+  return profiles.some((profile) => profile.profileId === selectedProfileId)
+    ? selectedProfileId
+    : null
+}
 
 export function packKey(pack: InstalledPack): string {
   return `${pack.packId}@${pack.version}#${pack.digest}`

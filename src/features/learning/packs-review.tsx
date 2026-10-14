@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from "react"
 import { LoaderCircle, Package } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
-import { importPack, type InstalledPack, type PackImportResult } from "@/lib/judge-api"
+import {
+  importPack,
+  type InstalledPack,
+  type PackImportResult,
+} from "@/lib/judge-api"
 import { readPackImportError } from "@/lib/pack-errors"
 
 import { PacksImportSteps, PacksValidationReport } from "./packs-checks"
@@ -14,7 +19,11 @@ import {
   type ImportStage,
 } from "./packs-import-state"
 import { PacksInstalledSummary } from "./packs-installed-summary"
-import { packsHeadingClass, packsSmallButtonClass, packsSurfaceClass } from "./packs-styles"
+import {
+  packsHeadingClass,
+  packsSmallButtonClass,
+  packsSurfaceClass,
+} from "./packs-styles"
 
 type PacksReviewProps = {
   path: string
@@ -23,9 +32,18 @@ type PacksReviewProps = {
   refreshAfterImport: () => Promise<InstalledPack[] | null>
 }
 
-type Installed = { result: PackImportResult; pack: InstalledPack | null; refreshFailed: boolean }
+type Installed = {
+  result: PackImportResult
+  pack: InstalledPack | null
+  refreshFailed: boolean
+}
 
-export function PacksReview({ path, disabled, onClose, refreshAfterImport }: PacksReviewProps) {
+export function PacksReview({
+  path,
+  disabled,
+  onClose,
+  refreshAfterImport,
+}: PacksReviewProps) {
   const [phase, setPhase] = useState<ImportPhase>("ready")
   const [failedStage, setFailedStage] = useState<ImportStage | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -36,6 +54,12 @@ export function PacksReview({ path, disabled, onClose, refreshAfterImport }: Pac
 
   useEffect(() => headingRef.current?.focus(), [])
 
+  useEffect(() => {
+    if (error) {
+      toast.error(error)
+    }
+  }, [error])
+
   async function install() {
     setPhase("installing")
     setError(null)
@@ -43,7 +67,13 @@ export function PacksReview({ path, disabled, onClose, refreshAfterImport }: Pac
     try {
       const result = await importPack(path)
       const packs = await refreshAfterImport()
-      const pack = packs?.find((candidate) => candidate.packId === result.packId && candidate.version === result.version && candidate.digest === result.digest) ?? null
+      const pack =
+        packs?.find(
+          (candidate) =>
+            candidate.packId === result.packId &&
+            candidate.version === result.version &&
+            candidate.digest === result.digest
+        ) ?? null
       setInstalled({ result, pack, refreshFailed: packs === null })
       setPhase("installed")
     } catch (reason) {
@@ -73,50 +103,97 @@ export function PacksReview({ path, disabled, onClose, refreshAfterImport }: Pac
         <PacksImportSteps phase={phase} />
 
         <div className="flex flex-col gap-1.5">
-          <h1 ref={headingRef} tabIndex={-1} className={`${packsHeadingClass} break-words outline-none`}>{title}</h1>
-          <p className="text-[15px] text-muted-foreground" role="status" aria-live="polite">{subtitle}</p>
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className={`${packsHeadingClass} break-words outline-none`}
+          >
+            {title}
+          </h1>
+          <p
+            className="text-[15px] text-muted-foreground"
+            role="status"
+            aria-live="polite"
+          >
+            {subtitle}
+          </p>
         </div>
 
-        <section aria-labelledby="sum-h" className={`${packsSurfaceClass} flex flex-col gap-[18px] px-[22px] py-5`}>
+        <section
+          aria-labelledby="sum-h"
+          className={`${packsSurfaceClass} flex flex-col gap-[18px] px-[22px] py-5`}
+        >
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex size-[38px] items-center justify-center rounded-[9px] bg-muted">
               <Package aria-hidden="true" className="size-4" />
             </div>
             <div className="flex min-w-0 flex-1 flex-col">
-              <h2 id="sum-h" className="truncate text-[15px] font-semibold">{name}</h2>
-              <span className="font-mono text-[13px] break-all text-muted-foreground">{path}</span>
+              <h2 id="sum-h" className="truncate text-[15px] font-semibold">
+                {name}
+              </h2>
+              <span className="font-mono text-[13px] break-all text-muted-foreground">
+                {path}
+              </span>
             </div>
             {installed ? null : (
-              <Button variant="ghost" className={packsSmallButtonClass} disabled={busy} onClick={onClose}>
+              <Button
+                variant="ghost"
+                className={packsSmallButtonClass}
+                disabled={busy}
+                onClick={onClose}
+              >
                 Choose another
               </Button>
             )}
           </div>
-          {installed ? <PacksInstalledSummary result={installed.result} pack={installed.pack} /> : null}
+          {installed ? (
+            <PacksInstalledSummary
+              result={installed.result}
+              pack={installed.pack}
+            />
+          ) : null}
         </section>
 
-        <PacksValidationReport statuses={importCheckStatuses(phase, failedStage)} />
-
-        {error ? (
-          <p className="rounded-lg bg-err-bg p-3 text-sm text-err" role="alert">{error}</p>
-        ) : null}
+        <PacksValidationReport
+          statuses={importCheckStatuses(phase, failedStage)}
+        />
 
         <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
           {installed ? (
             <>
-              <Button variant="ghost" onClick={onClose}>Back to packs</Button>
+              <Button variant="ghost" onClick={onClose}>
+                Back to packs
+              </Button>
               {installed.pack && installed.pack.problems.length > 0 ? (
-                <Button nativeButton={false} render={<a href={`#problems?${new URLSearchParams({ pack: installed.pack.packId })}`} />}>
+                <Button
+                  nativeButton={false}
+                  render={
+                    <a
+                      href={`#problems?${new URLSearchParams({ pack: installed.pack.packId })}`}
+                    />
+                  }
+                >
                   Open problems
                 </Button>
               ) : null}
             </>
           ) : (
             <>
-              <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
-              <Button disabled={disabled || busy} onClick={() => void install()}>
-                {busy ? <LoaderCircle aria-hidden="true" className="animate-spin" /> : null}
-                {busy ? "Installing…" : phase === "failed" ? "Try again" : "Install pack"}
+              <Button variant="ghost" disabled={busy} onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                disabled={disabled || busy}
+                onClick={() => void install()}
+              >
+                {busy ? (
+                  <LoaderCircle aria-hidden="true" className="animate-spin" />
+                ) : null}
+                {busy
+                  ? "Installing…"
+                  : phase === "failed"
+                    ? "Try again"
+                    : "Install pack"}
               </Button>
             </>
           )}

@@ -1,57 +1,35 @@
-import { CircleCheck, LoaderCircle } from "lucide-react"
-
 import { Button } from "@/components/ui/button"
 
-import type { ProfileCheck } from "./connections-check"
-
 type FooterProps = {
-  check: ProfileCheck | undefined
   testing: boolean
   canTest: boolean
   canDelete: boolean
   disabled: boolean
-  isNew: boolean
   onDelete: () => void
   onTest: () => void
+  isNew: boolean
 }
 
 export function ConnectionsFormFooter({
-  check,
-  testing,
   canTest,
+  testing,
   canDelete,
   disabled,
-  isNew,
   onDelete,
   onTest,
+  isNew,
 }: FooterProps) {
   return (
     <div className="flex flex-wrap items-center gap-3 border-t bg-sidebar px-6 py-4">
-      <div className="flex min-w-0 flex-[1_1_240px] text-[13px]">
-        {testing ? (
-          <span role="status" className="inline-flex items-center gap-2 text-muted-foreground">
-            <LoaderCircle className="size-[15px] animate-spin" aria-hidden="true" />
-            Testing the connection and verifying read-only access...
-          </span>
-        ) : check?.ok ? (
-          <span role="status" className="inline-flex items-center gap-2 text-ok">
-            <CircleCheck className="size-[15px] shrink-0" aria-hidden="true" />
-            Connected in {check.elapsedMs} ms · read-only session confirmed
-          </span>
-        ) : check ? (
-          <span role="alert" className="text-err">
-            {check.message}
-          </span>
-        ) : (
-          <span className="text-muted-foreground">
-            {isNew
-              ? "Save the profile, then test it. Nothing connects automatically."
-              : "Test uses the saved profile. Nothing connects automatically."}
-          </span>
-        )}
-      </div>
+      <div className="flex-1" />
       {canDelete ? (
-        <Button type="button" variant="ghost" className="text-err hover:text-err" onClick={onDelete} disabled={disabled}>
+        <Button
+          type="button"
+          variant="ghost"
+          className="text-err hover:text-err"
+          onClick={onDelete}
+          disabled={disabled}
+        >
           Delete
         </Button>
       ) : null}
@@ -62,7 +40,7 @@ export function ConnectionsFormFooter({
         onClick={onTest}
         disabled={!canTest || testing}
       >
-        {check && !check.ok ? "Retry test" : "Test connection"}
+        Test connection
       </Button>
       <Button type="submit" disabled={disabled}>
         {isNew ? "Save profile" : "Save changes"}

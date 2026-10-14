@@ -4,7 +4,7 @@ import { AlertDialog } from "@base-ui/react/alert-dialog"
 import { cn } from "@/lib/utils"
 
 export const DIALOG_FIELD_CLASS =
-  "h-[38px] rounded-lg bg-card px-3 py-0 font-mono text-[13.5px] leading-6 md:text-[13.5px] md:leading-6 focus-visible:ring-ring/15 dark:bg-card"
+  "h-9 rounded-lg bg-card px-3 py-0 font-mono text-[13.5px] leading-6 md:text-[13.5px] md:leading-6 focus-visible:ring-ring/15 dark:bg-card"
 
 /**
  * Modal shell for environment lifecycle dialogs. Base UI traps focus,

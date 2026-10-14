@@ -5,10 +5,18 @@ import { ArrowRight } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import type { ConnectionProfileSummary } from "@/lib/judge-api"
 
-import type { ProfileCheck } from "./connections-check"
 import { ConnectionsFormFooter } from "./connections-form-footer"
-import { SecuritySection, ServerSection, SignInSection } from "./connections-form-sections"
-import { ENGINE_LABELS, draftForEngine, draftFromUrl, type ProfileDraft } from "./connections-profile"
+import {
+  SecuritySection,
+  ServerSection,
+  SignInSection,
+} from "./connections-form-sections"
+import {
+  ENGINE_LABELS,
+  draftForEngine,
+  draftFromUrl,
+  type ProfileDraft,
+} from "./connections-profile"
 import { smallButtonClass, surfaceCardClass } from "./connections-ui"
 import { ConnectionsUrlImport } from "./connections-url-import"
 import { explorerHref } from "./explorer-route"
@@ -16,39 +24,32 @@ import { explorerHref } from "./explorer-route"
 type ProfileFormProps = {
   draft: ProfileDraft
   saved: ConnectionProfileSummary | undefined
-  check: ProfileCheck | undefined
   testing: boolean
-  desktopAvailable: boolean
   disabled: boolean
-  error: string | null
   onChange: (next: ProfileDraft) => void
   onSave: () => void
   onDelete: () => void
   onTest: () => void
+  modal?: boolean
 }
 
-function subtitle(saved: ConnectionProfileSummary | undefined, check: ProfileCheck | undefined) {
+function subtitle(saved: ConnectionProfileSummary | undefined) {
   if (!saved) {
     return "Explorer profiles are always read-only."
   }
-  if (check?.ok) {
-    return `${check.info.serverVersion} · checked at ${check.checkedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-  }
-  return `${ENGINE_LABELS[saved.engine]} · ${check ? "last test failed" : "not tested this session"}`
+  return `${ENGINE_LABELS[saved.engine]} · read-only profile`
 }
 
 export function ConnectionsProfileForm({
   draft,
   saved,
-  check,
   testing,
-  desktopAvailable,
   disabled,
-  error,
   onChange,
   onSave,
   onDelete,
   onTest,
+  modal = false,
 }: ProfileFormProps) {
   const patch = (next: Partial<ProfileDraft>) => onChange({ ...draft, ...next })
 
@@ -59,34 +60,39 @@ export function ConnectionsProfileForm({
 
   return (
     <section
-      aria-labelledby="profile-form-heading"
-      className={`${surfaceCardClass} min-w-0 flex-[3_1_560px] overflow-hidden`}
+      aria-labelledby={!modal ? "profile-form-heading" : undefined}
+      className={
+        modal
+          ? "min-w-0"
+          : `${surfaceCardClass} min-w-0 flex-[3_1_560px] overflow-hidden`
+      }
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-5">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <h2 id="profile-form-heading" className="truncate text-[17px] font-semibold">
-            {saved?.displayName ?? "New profile"}
-          </h2>
-          <span className="truncate text-[13px] text-muted-foreground">{subtitle(saved, check)}</span>
+      {!modal ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-5">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h2
+              id="profile-form-heading"
+              className="truncate text-[17px] font-semibold"
+            >
+              {saved?.displayName ?? "New profile"}
+            </h2>
+            <span className="truncate text-[13px] text-muted-foreground">
+              {subtitle(saved)}
+            </span>
+          </div>
+          {saved ? (
+            <a
+              href={explorerHref(saved.profileId)}
+              className={cn(
+                buttonVariants({ variant: "outline" }),
+                smallButtonClass,
+                "bg-card shadow-xs"
+              )}
+            >
+              Open in Explorer <ArrowRight />
+            </a>
+          ) : null}
         </div>
-        {saved ? (
-          <a
-            href={explorerHref(saved.profileId)}
-            className={cn(buttonVariants({ variant: "outline" }), smallButtonClass, "bg-card shadow-xs")}
-          >
-            Open in Explorer <ArrowRight />
-          </a>
-        ) : null}
-      </div>
-      {!desktopAvailable ? (
-        <p role="status" className="mx-6 mb-5 rounded-lg border border-warn/30 bg-warn-bg p-3 text-sm text-warn">
-          Connection profiles can be added from the SQL Judge desktop app. Browser preview is read-only.
-        </p>
-      ) : null}
-      {error ? (
-        <p role="alert" className="mx-6 mb-5 rounded-lg border border-err/30 bg-err-bg p-3 text-sm text-err">
-          {error}
-        </p>
       ) : null}
       <form onSubmit={submit}>
         <fieldset disabled={disabled} className="min-w-0">
@@ -110,14 +116,13 @@ export function ConnectionsProfileForm({
           />
           <SecuritySection draft={draft} onChange={patch} />
           <ConnectionsFormFooter
-            check={check}
             testing={testing}
             canTest={Boolean(saved)}
             canDelete={Boolean(saved)}
             disabled={disabled}
-            isNew={!saved}
             onDelete={onDelete}
             onTest={onTest}
+            isNew={!saved}
           />
         </fieldset>
       </form>

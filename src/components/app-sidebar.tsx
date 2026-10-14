@@ -14,8 +14,17 @@ import {
 } from "lucide-react"
 
 import { Sidebar } from "@/components/ui/sidebar"
-import { getManagedRuntimeStatus, type ManagedRuntimeStatus } from "@/lib/judge-api"
+import {
+  getManagedRuntimeStatus,
+  listConnectionProfiles,
+  type ConnectionProfileSummary,
+  type ManagedRuntimeStatus,
+} from "@/lib/judge-api"
 import { cn } from "@/lib/utils"
+import {
+  getSelectedEnvironmentProfileId,
+  subscribeToEnvironmentProfileSelection,
+} from "@/features/learning/environment-selection"
 import { runtimeIndicator } from "./runtime-indicator"
 
 export type AppRoute =
@@ -62,20 +71,38 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
 
 const focusRing =
   "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-const runtimeDots = { ok: "bg-[#16a34a]", err: "bg-err", muted: "bg-muted-foreground" }
+const runtimeDots = {
+  ok: "bg-[#16a34a]",
+  err: "bg-err",
+  muted: "bg-muted-foreground",
+}
 
 export function AppSidebar({
   activeRoute,
   ...props
 }: React.ComponentProps<typeof Sidebar> & { activeRoute: AppRoute }) {
-  const [runtime, setRuntime] = React.useState<ManagedRuntimeStatus | null | undefined>()
-  const indicator = runtimeIndicator(runtime)
+  const [runtime, setRuntime] = React.useState<
+    ManagedRuntimeStatus | null | undefined
+  >()
+  const [profiles, setProfiles] = React.useState<ConnectionProfileSummary[]>([])
+  const selectedProfileId = React.useSyncExternalStore(
+    subscribeToEnvironmentProfileSelection,
+    getSelectedEnvironmentProfileId,
+    getSelectedEnvironmentProfileId
+  )
+  const activeProfile = profiles.find(
+    (profile) => profile.profileId === selectedProfileId
+  )
+  const indicator = runtimeIndicator(runtime, activeProfile?.displayName)
 
   React.useEffect(() => {
     let active = true
     void getManagedRuntimeStatus()
       .then((status) => active && setRuntime(status))
       .catch(() => active && setRuntime(null))
+    void listConnectionProfiles()
+      .then((loaded) => active && setProfiles(loaded))
+      .catch(() => active && setProfiles([]))
     return () => {
       active = false
     }
@@ -87,13 +114,21 @@ export function AppSidebar({
         aria-label="Main navigation"
         className="flex h-full flex-col gap-5 px-3 py-3.5 text-sm text-foreground"
       >
-        <a href="#home" className={cn("flex items-center gap-2.5 rounded-lg px-1.5 py-0.5", focusRing)}>
+        <a
+          href="#home"
+          className={cn(
+            "flex items-center gap-2.5 rounded-lg px-1.5 py-0.5",
+            focusRing
+          )}
+        >
           <span className="flex size-[30px] items-center justify-center rounded-lg bg-primary font-mono text-xs font-medium text-primary-foreground">
             SJ
           </span>
           <span className="flex flex-col leading-[1.25]">
             <span className="font-semibold">SQL Judge</span>
-            <span className="text-xs text-muted-foreground">Local workspace</span>
+            <span className="text-xs text-muted-foreground">
+              Local workspace
+            </span>
           </span>
         </a>
         <button
@@ -113,9 +148,18 @@ export function AppSidebar({
         <div className="flex flex-col gap-[18px]">
           {navigationGroups.map((group) => (
             <div key={group.label} className="flex flex-col gap-0.5">
-              <div className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">{group.label}</div>
+              <div className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">
+                {group.label}
+              </div>
               {group.items.map((item) => (
-                <NavLink key={item.route} item={item} active={activeRoute === item.route || (item.route === "problems" && activeRoute === "solve")} />
+                <NavLink
+                  key={item.route}
+                  item={item}
+                  active={
+                    activeRoute === item.route ||
+                    (item.route === "problems" && activeRoute === "solve")
+                  }
+                />
               ))}
             </div>
           ))}
@@ -124,12 +168,23 @@ export function AppSidebar({
         <div className="flex flex-col gap-0.5">
           <a
             href="#environments"
-            className={cn("flex items-start gap-2.5 rounded-lg px-2.5 py-2 hover:bg-hover", focusRing)}
+            className={cn(
+              "flex items-start gap-2.5 rounded-lg px-2.5 py-2 hover:bg-hover",
+              focusRing
+            )}
           >
-            <span className={cn("mt-[7px] size-2 shrink-0 rounded-full", runtimeDots[indicator.tone])} aria-hidden="true" />
+            <span
+              className={cn(
+                "mt-[7px] size-2 shrink-0 rounded-full",
+                runtimeDots[indicator.tone]
+              )}
+              aria-hidden="true"
+            />
             <span className="flex flex-col leading-[1.35]">
               <span className="text-[13px] font-medium">{indicator.label}</span>
-              <span className="text-xs text-muted-foreground">{indicator.detail}</span>
+              <span className="text-xs text-muted-foreground">
+                {indicator.detail}
+              </span>
             </span>
           </a>
           <NavLink
@@ -154,7 +209,13 @@ function NavLink({ item, active }: { item: NavigationItem; active: boolean }) {
         active && "bg-hover font-medium"
       )}
     >
-      <Icon className={cn("size-4 shrink-0", active ? "text-foreground" : "text-muted-foreground")} aria-hidden="true" />
+      <Icon
+        className={cn(
+          "size-4 shrink-0",
+          active ? "text-foreground" : "text-muted-foreground"
+        )}
+        aria-hidden="true"
+      />
       {item.label}
     </a>
   )

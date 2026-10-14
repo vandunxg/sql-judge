@@ -82,11 +82,20 @@ Linux shell. The runtime now:
   `initdb --pwfile` inside the user-private app data directory, deleted immediately after `initdb` exits.
   Tool processes run with `CREATE_NO_WINDOW`.
 
+- **Imports off the main thread.** `import_pack` is an async command that runs
+  the import on its own OS thread: a plain Tauri command runs on the main thread
+  and froze the window through initdb and validation, and the sync postgres
+  client cannot run inside Tauri's async runtime (dropping its Tokio runtime
+  there panics, which aborts the release build).
+
 The instance marker and `NOLOGIN` runner role are unchanged on every platform.
 `.github/workflows/managed-runtime.yml` runs the runtime and native import tests
 on `macos-latest` and `windows-latest` with PostgreSQL left off PATH (and again
 on macOS under launchd's GUI environment), since these platforms cannot be
 exercised on a Linux workstation. It also uploads the NSIS installer and both
-DMGs as workflow artifacts and launches the packaged app to check it starts. A lost Credential
+DMGs as workflow artifacts and installs `examples/hr-analytics.sqljudge.zip`
+through the packaged app's own Packs screen: Accessibility scripting on macOS
+(Apple Silicon and a native Intel runner), UI Automation on Windows after a
+silent NSIS install, and WebKitWebDriver on Linux. A lost Credential
 Manager entry leaves a Windows cluster unreachable; recovery is a manual
 deletion of `postgres-runtime`.

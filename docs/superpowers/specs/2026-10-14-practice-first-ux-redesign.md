@@ -46,49 +46,50 @@ Every feature screen uses the same primitives and state rules:
 
 ### Information Architecture
 
-- The user selects one installed pack as the current workspace. The initial
-  selection is the first installed pack; the selection remains stable for the
-  mounted workspace while that pack is still installed.
-- The problem rail lists only problems in that pack. Search and difficulty
-  filters are scoped to that pack.
-- The rail renders a fixed page of five problems with Previous/Next controls,
-  count range, disabled boundary controls, and keyboard listbox navigation.
-- A `Problem` combobox beside the pack selector exposes all problems in the
-  selected pack, supports text search, indicates difficulty, and supports
-  Arrow keys, Enter, and Escape. It is a direct-jump tool, not a replacement
-  for sequential pagination. Selecting an item updates the current page to
-  the page containing that problem.
-- Changing pack resets the page/filter if necessary, selects that pack's first
-  visible problem, retains per-problem drafts by immutable pack/problem key,
-  and clears any previous result.
+Revised 2026-10-14: the binding design export
+`docs/design/Solve — submit verdict-html/Solve.dc.html` supersedes the earlier
+persistent-rail layout. The separate table-style Problems page
+(`docs/design/Problems-html/`) is a later task.
+
+- The current pack is the pack of the selected problem. The initial selection
+  is the first problem of the first installed pack.
+- A `Problem list` toolbar button opens a left sheet with a pack selector,
+  search, a difficulty filter, and a fixed page of five problems from that
+  pack with Previous/Next page controls and a `Showing x–y of n` range. The
+  sheet opens on the page containing the selected problem.
+- Previous/Next problem buttons beside `Problem list` step through the current
+  pack in catalog order and disable at the boundaries.
+- Changing pack selects that pack's first problem, resets the sheet filters,
+  retains per-problem drafts by immutable pack/problem key, and clears any
+  previous result.
 
 ### Layout
 
-- The main column is editor-first: problem title, dialect/difficulty badges,
-  compact Run sample and Submit actions, then Monaco.
-- Statement, Schema, Sample data, and Hints are context tabs above the editor.
-  The active tab is keyboard reachable and only one panel renders at a time.
-- At 1280px and above, the paginated problem rail is persistent at 240–280px
-  and the editor fills remaining width. Context stays tabbed to preserve editor
-  width.
-- From 1024px through 1279px, the problem rail is a collapsible drawer
-  triggered by a `Problems` button; the pack and problem comboboxes remain in
-  the header.
-- Below 1024px, problem selection and context appear in modal sheets. The
-  editor and primary Run/Submit actions remain visible without horizontal
-  scrolling.
-- Result and status occupy a fixed section below the editor. A result replaces
-  the ready placeholder within that section, so it does not shift the action
-  bar or collapse the editor.
+- A toolbar row holds `Problem list` and Previous/Next on the left, and
+  `Run` (secondary, `Ctrl ↵`) and `Submit` (primary) in the centre.
+- Two panes follow, as in the design: the problem pane (Description and
+  Schema tabs) and the work column (editor pane over a results pane with Run
+  result and Submission tabs). Panes use the design's 10px radius, 42px tab
+  header, 30px tabs, and 8px gaps.
+- The panes are flex items (basis 440px and 560px) that wrap, so below about
+  1024px of content width the problem pane stacks above the editor without
+  horizontal scrolling.
+- The results pane has a fixed minimum height below the editor. A result
+  replaces the idle copy inside it, so it never shifts the action bar or
+  collapses the editor.
+- Not built because no data exists for them, and adding them would need new
+  IPC: the Submissions tab, per-fixture tabs, expected output, the "What
+  differs" explanation, example input tables, editor formatting, and maximize.
 
 ### Run, Submit, and Stop
 
 - Idle: `Run sample` is secondary and `Submit` is primary. Tooltips explain
   the difference and disabled state.
-- On start: the triggered button keeps its place and width, shows a spinner and
-  `Running sample...` or `Submitting...`; the other primary action is disabled.
-- A subtle inline status appears below the action bar immediately. After 1.5
-  seconds, a small `Stop` link appears beside the running action. It invokes
+- On start: the triggered button keeps its place, label, and width and swaps
+  its icon for a spinner; the other primary action is disabled.
+- The results pane switches to the matching tab and shows `Running sample...`
+  or `Submitting...` immediately. After 1.5 seconds, a small `Stop` action
+  appears to the right of the action group. It invokes
   the existing request-ID cancellation path.
 - Editor input and problem/pack switching are disabled during an active run to
   avoid ambiguous draft/request state. Context tabs remain readable.

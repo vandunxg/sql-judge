@@ -179,6 +179,12 @@ export type DeleteManagedEnvironmentRequest = {
   confirmed: boolean
 }
 
+export type SubmissionTestSummary = {
+  testId: string
+  verdict: string
+  elapsedMs: number
+}
+
 export type SubmissionHistorySummary = {
   submissionId: string
   packId: string
@@ -188,6 +194,11 @@ export type SubmissionHistorySummary = {
   policyVersion: string
   verdict: string
   createdAt: string
+  /** Null for records saved before problem tracking existed. */
+  problemId: string | null
+  /** Records saved before run tracking existed are submissions. */
+  mode: "run" | "submit"
+  tests: SubmissionTestSummary[]
 }
 
 export type PackImportResult = {
@@ -199,7 +210,8 @@ export type PackImportResult = {
 }
 
 export type BackupSnapshot = {
-  version: 2
+  /** Version 3 adds per-submission problemId/mode; version 2 files still restore. */
+  version: 2 | 3
   environments: Array<{
     envId: string
     instanceId: string
@@ -220,6 +232,8 @@ export type BackupSnapshot = {
     policyVersion: string
     verdict: string
     createdAt: string
+    problemId?: string | null
+    mode?: "run" | "submit"
     tests: Array<{
       testId: string
       verdict: string

@@ -4,11 +4,12 @@ import {
   BookOpen,
   Cable,
   Database,
-  FolderOpen,
   History,
   Home,
-  LayoutDashboard,
+  Package,
   Search,
+  SlidersHorizontal,
+  Table2,
 } from "lucide-react"
 
 import {
@@ -23,37 +24,36 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-
-export type AppRoute =
-  | "home"
-  | "practice"
-  | "environments"
-  | "history"
-  | "progress"
-  | "packs"
-  | "connections"
+import type { AppRoute } from "@/app-route-state"
+import { getManagedRuntimeStatus, type ManagedRuntimeStatus } from "@/lib/judge-api"
+import { cn } from "@/lib/utils"
 
 type NavigationItem = {
   route: AppRoute
   label: string
-  icon: typeof LayoutDashboard
+  icon: typeof Home
 }
 
 const navigation: NavigationItem[] = [
   { route: "home", label: "Home", icon: Home },
-  { route: "practice", label: "Practice", icon: LayoutDashboard },
+  { route: "problems", label: "Problems", icon: BookOpen },
   { route: "history", label: "History", icon: History },
   { route: "progress", label: "Progress", icon: BarChart3 },
 ]
 
 const libraryNavigation: NavigationItem[] = [
-  { route: "packs", label: "Packs", icon: FolderOpen },
+  { route: "packs", label: "Packs", icon: Package },
 ]
 
 const dataNavigation: NavigationItem[] = [
   { route: "environments", label: "Environments", icon: Database },
   { route: "connections", label: "Connections", icon: Cable },
+  { route: "explorer", label: "Explorer", icon: Table2 },
 ]
+
+function isActive(item: AppRoute, activeRoute: AppRoute) {
+  return item === activeRoute || (item === "problems" && activeRoute === "practice")
+}
 
 export function AppSidebar({
   activeRoute,
@@ -90,23 +90,7 @@ export function AppSidebar({
         <SidebarGroup>
           <SidebarGroupLabel>Learn</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {navigation.map((item) => {
-                const Icon = item.icon
-                return (
-                  <SidebarMenuItem key={item.route}>
-                    <SidebarMenuButton
-                      render={<a href={`#${item.route}`} />}
-                      isActive={activeRoute === item.route}
-                      tooltip={item.label}
-                    >
-                      <Icon />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
+            <NavigationItems items={navigation} activeRoute={activeRoute} />
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
@@ -121,30 +105,13 @@ export function AppSidebar({
             <NavigationItems items={dataNavigation} activeRoute={activeRoute} />
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup className="mt-auto">
-          <SidebarGroupContent>
-            <a href="#environments" className="block rounded-lg p-3 text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent">
-              <div className="flex items-center gap-2 font-medium text-sidebar-foreground">
-                <BookOpen className="size-3.5" />
-                Runtime ready
-              </div>
-              <p className="mt-1 leading-5">
-                Local practice workspace
-              </p>
-            </a>
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>
-        <div className="flex items-center gap-2 rounded-lg p-2 text-xs">
-          <span className="size-2 rounded-full bg-emerald-500" />
-          <div className="min-w-0">
-            <p className="truncate font-medium">SQL learner</p>
-            <p className="truncate text-sidebar-foreground/60">
-              Local workspace
-            </p>
-          </div>
-        </div>
+      <SidebarFooter className="gap-1 pb-3">
+        <RuntimeStatus />
+        <NavigationItems
+          items={[{ route: "settings", label: "Settings", icon: SlidersHorizontal }]}
+          activeRoute={activeRoute}
+        />
       </SidebarFooter>
     </Sidebar>
   )
@@ -165,7 +132,7 @@ function NavigationItems({
           <SidebarMenuItem key={item.route}>
             <SidebarMenuButton
               render={<a href={`#${item.route}`} />}
-              isActive={activeRoute === item.route}
+              isActive={isActive(item.route, activeRoute)}
               tooltip={item.label}
             >
               <Icon />
@@ -175,5 +142,41 @@ function NavigationItems({
         )
       })}
     </SidebarMenu>
+  )
+}
+
+function RuntimeStatus() {
+  const [status, setStatus] = React.useState<ManagedRuntimeStatus | null>(null)
+
+  React.useEffect(() => {
+    let active = true
+    void getManagedRuntimeStatus()
+      .then((next) => active && setStatus(next))
+      .catch(() => active && setStatus(null))
+    return () => {
+      active = false
+    }
+  }, [])
+
+  return (
+    <a
+      href="#environments"
+      className="flex gap-2.5 rounded-lg px-2 py-1.5 text-xs hover:bg-sidebar-accent"
+    >
+      <span
+        className={cn(
+          "mt-1.5 size-2 shrink-0 rounded-full",
+          status?.available ? "bg-ok" : "bg-warn"
+        )}
+      />
+      <span className="min-w-0">
+        <span className="block font-medium">
+          {status?.available ? "Runtime ready" : "Runtime stopped"}
+        </span>
+        <span className="block truncate text-sidebar-foreground/60">
+          {status?.available ? "PostgreSQL · local socket" : "Start it from Environments"}
+        </span>
+      </span>
+    </a>
   )
 }

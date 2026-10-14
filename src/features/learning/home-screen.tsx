@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import {
   ArrowRight,
   CheckCircle2,
@@ -7,32 +7,37 @@ import {
   LoaderCircle,
 } from "lucide-react"
 
+import { problemHref } from "@/app-route-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { listInstalledPacks, type InstalledPack } from "@/lib/judge-api"
-import { cn } from "@/lib/utils"
+import {
+  listInstalledPacks,
+  listSubmissionHistory,
+  type InstalledPack,
+  type SubmissionHistorySummary,
+} from "@/lib/judge-api"
 
 import { catalogProblems, type LearningProblem } from "./catalog"
+import { DifficultyBadge } from "./difficulty-badge"
 import { homeProblems } from "./home-state"
+import { problemStatuses, resumeProblemId } from "./problem-status"
 import { learningLoadErrorMessage } from "./load-state"
-
-const difficultyClass = {
-  easy: "border-emerald-600/15 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-  medium: "border-amber-600/15 bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  hard: "border-red-600/15 bg-red-500/10 text-red-700 dark:text-red-400",
-}
 
 const homeCardClass =
   "gap-0 rounded-xl border border-border bg-card py-0 shadow-[0_1px_2px_rgba(16,16,24,0.05)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.5)]"
 
 export function HomeScreen() {
   const [packs, setPacks] = useState<InstalledPack[]>([])
+  const [history, setHistory] = useState<SubmissionHistorySummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
+    void listSubmissionHistory()
+      .then((records) => active && setHistory(records))
+      .catch(() => undefined)
     void listInstalledPacks()
       .then((nextPacks) => active && setPacks(nextPacks))
       .catch(() => active && setError(learningLoadErrorMessage("catalog")))
@@ -42,12 +47,14 @@ export function HomeScreen() {
     }
   }, [])
 
-  const problems = useMemo(() => catalogProblems(packs), [packs])
-  const activePack = packs[0]
+  const problems = catalogProblems(packs)
+  const resumeId = resumeProblemId(problemStatuses(history)) ?? ""
+  const resumePackId = problems.find((problem) => problem.id === resumeId)?.packId
+  const activePack = packs.find((pack) => pack.packId === resumePackId) ?? packs[0]
   const { resume, next } = homeProblems(
     problems,
     activePack?.packId ?? "",
-    ""
+    resumeId
   )
 
   return (
@@ -62,7 +69,7 @@ export function HomeScreen() {
                 : "Import a validated problem pack to begin practicing."}
             </p>
           </div>
-          <Button className="h-9 gap-2 px-3.5" variant="outline" render={<a href="#practice" />}>
+          <Button className="h-9 gap-2 px-3.5" variant="outline" nativeButton={false} render={<a href="#problems" />}>
             Browse problems <ArrowRight />
           </Button>
         </header>
@@ -106,7 +113,7 @@ function ResumeCard({ problem, pack }: { problem?: LearningProblem; pack?: Insta
             <div>
               <h2 className="text-xl font-semibold tracking-tight">{problem.title}</h2>
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                <DifficultyBadge problem={problem} />
+                <DifficultyBadge difficulty={problem.difficulty} />
                 {problem.topics.slice(0, 2).map((topic) => <Badge key={topic} variant="outline">{topic}</Badge>)}
               </div>
             </div>
@@ -114,14 +121,14 @@ function ResumeCard({ problem, pack }: { problem?: LearningProblem; pack?: Insta
               {problem.starterSql || "-- Write a read-only SQL statement\nSELECT ..."}
             </pre>
             <div className="flex flex-wrap gap-2">
-              <Button className="h-9 gap-2 px-3.5" render={<a href="#practice" />}>Start solving <ArrowRight /></Button>
-              <Button className="h-9 gap-2 px-3.5" variant="ghost" render={<a href="#practice" />}>Pick another problem</Button>
+              <Button className="h-9 gap-2 px-3.5" nativeButton={false} render={<a href={problemHref(problem.id)} />}>Start solving <ArrowRight /></Button>
+              <Button className="h-9 gap-2 px-3.5" variant="ghost" nativeButton={false} render={<a href="#problems" />}>Pick another problem</Button>
             </div>
           </>
         ) : (
           <div className="flex flex-col items-start gap-4">
             <p className="max-w-xl text-sm leading-6 text-muted-foreground">Import a validated pack, then use Practice to run and submit a SQL solution against isolated fixtures.</p>
-            <Button className="h-9 gap-2 px-3.5" render={<a href="#packs" />}>Open packs <ArrowRight /></Button>
+            <Button className="h-9 gap-2 px-3.5" nativeButton={false} render={<a href="#packs" />}>Open packs <ArrowRight /></Button>
           </div>
         )}
       </CardContent>
@@ -138,10 +145,10 @@ function UpNext({ problems, pack }: { problems: LearningProblem[]; pack?: Instal
       </CardHeader>
       <CardContent className="p-0">
         {problems.length > 0 ? problems.map((problem) => (
-          <a key={problem.id} href="#practice" className="flex items-center gap-3 border-b px-5 py-3 last:border-b-0 hover:bg-muted/60">
+          <a key={problem.id} href={problemHref(problem.id)} className="flex items-center gap-3 border-b px-5 py-3 last:border-b-0 hover:bg-muted/60">
             <CircleDashed className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1"><span className="block truncate font-medium">{problem.title}</span><span className="mt-0.5 block text-[13px] text-muted-foreground">{problem.topics.join(" · ") || problem.dialect}</span></span>
-            <DifficultyBadge problem={problem} />
+            <DifficultyBadge difficulty={problem.difficulty} />
             <ArrowRight className="size-4 text-muted-foreground" />
           </a>
         )) : <p className="p-5 text-sm text-muted-foreground">More problems will appear after a pack is imported.</p>}
@@ -152,11 +159,11 @@ function UpNext({ problems, pack }: { problems: LearningProblem[]; pack?: Instal
 
 function SetupCard({ hasPacks }: { hasPacks: boolean }) {
   const complete = hasPacks ? 2 : 1
-  return <Card className={homeCardClass}><CardContent className="space-y-5 p-5"><div><div className="flex items-center justify-between"><h2 className="text-[15px] font-semibold">Get set up</h2><span className="text-[13px] text-muted-foreground">{complete} of 3 done</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${(complete / 3) * 100}%` }} /></div></div><SetupStep done label="Open the local workspace" detail="Your practice workspace runs on this device." /><SetupStep done={hasPacks} label="Import a problem pack" detail={hasPacks ? "Validated learning content is available." : "Add a validated pack to unlock practice."} /><SetupStep label="Submit your first solution" detail="Run a sample, then submit for judging." action="#practice" /></CardContent></Card>
+  return <Card className={homeCardClass}><CardContent className="space-y-5 p-5"><div><div className="flex items-center justify-between"><h2 className="text-[15px] font-semibold">Get set up</h2><span className="text-[13px] text-muted-foreground">{complete} of 3 done</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-ok" style={{ width: `${(complete / 3) * 100}%` }} /></div></div><SetupStep done label="Open the local workspace" detail="Your practice workspace runs on this device." /><SetupStep done={hasPacks} label="Import a problem pack" detail={hasPacks ? "Validated learning content is available." : "Add a validated pack to unlock practice."} /><SetupStep label="Submit your first solution" detail="Run a sample, then submit for judging." action="#problems" /></CardContent></Card>
 }
 
 function SetupStep({ done = false, label, detail, action }: { done?: boolean; label: string; detail: string; action?: string }) {
-  return <div className="flex gap-3"><span className="mt-0.5">{done ? <CheckCircle2 className="size-5 text-emerald-600" /> : <CircleDot className="size-5" />}</span><div><p className="text-sm font-medium">{label}</p><p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{detail}</p>{action ? <Button className="mt-3 h-8 gap-1.5 px-2.5" variant="outline" render={<a href={action} />}>Open a problem</Button> : null}</div></div>
+  return <div className="flex gap-3"><span className="mt-0.5">{done ? <CheckCircle2 className="size-5 text-ok" /> : <CircleDot className="size-5" />}</span><div><p className="text-sm font-medium">{label}</p><p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{detail}</p>{action ? <Button className="mt-3 h-8 gap-1.5 px-2.5" variant="outline" nativeButton={false} render={<a href={action} />}>Open a problem</Button> : null}</div></div>
 }
 
 function ShortcutsCard() {
@@ -167,6 +174,3 @@ function Shortcut({ label, keys }: { label: string; keys: string[] }) {
   return <div className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">{label}</dt><dd className="flex gap-1">{keys.map((key) => <kbd key={key} className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{key}</kbd>)}</dd></div>
 }
 
-function DifficultyBadge({ problem }: { problem: LearningProblem }) {
-  return <Badge className={cn("border", difficultyClass[problem.difficulty])}>{problem.difficulty[0].toUpperCase() + problem.difficulty.slice(1)}</Badge>
-}

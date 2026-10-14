@@ -3,11 +3,15 @@ import { describe, expect, test } from "bun:test"
 import {
   confirmationMatches,
   environmentBlockedReason,
+  environmentProfileSelection,
   environmentStatus,
   isManagedNamespace,
+  isCurrentEnvironmentLoad,
   namespaceError,
   packKey,
   packLabel,
+  environmentSourceLabel,
+  postgresqlProfiles,
   uniqueNamespace,
 } from "./environments-model"
 
@@ -139,5 +143,37 @@ describe("environments model", () => {
     expect(namespaceError("sj_hr_practice", [environment])).toBe(
       "Another environment already uses this namespace."
     )
+  })
+
+  test("offers only PostgreSQL profiles and keeps local as the fallback source", () => {
+    const profiles = [
+      { profileId: "pg-a", displayName: "Training PG", engine: "postgresql" },
+      {
+        profileId: "sql-a",
+        displayName: "Reporting SQL Server",
+        engine: "sqlserver",
+      },
+    ]
+    expect(postgresqlProfiles(profiles)).toEqual([profiles[0]])
+    expect(environmentSourceLabel(null, profiles)).toBe("Local runtime")
+    expect(environmentSourceLabel("pg-a", profiles)).toBe("Training PG")
+  })
+
+  test("ignores stale environment loads", () => {
+    expect(isCurrentEnvironmentLoad(2, 2)).toBe(true)
+    expect(isCurrentEnvironmentLoad(1, 2)).toBe(false)
+  })
+
+  test("falls back to local when the selected profile disappears", () => {
+    expect(
+      environmentProfileSelection("pg-a", [
+        { profileId: "pg-b", displayName: "Other PG", engine: "postgresql" },
+      ])
+    ).toBe(null)
+    expect(
+      environmentProfileSelection("pg-a", [
+        { profileId: "pg-a", displayName: "Training PG", engine: "postgresql" },
+      ])
+    ).toBe("pg-a")
   })
 })

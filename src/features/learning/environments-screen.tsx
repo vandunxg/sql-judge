@@ -63,6 +63,12 @@ export function EnvironmentsScreen() {
           loading={state.loading}
           busy={state.busy}
           onStart={() => void state.startRuntime()}
+          profiles={state.postgresProfiles}
+          selectedProfileId={state.selectedProfileId}
+          onProfileChange={(profileId) => void state.selectProfile(profileId)}
+          onManageConnections={() => {
+            window.location.hash = "connections"
+          }}
         />
 
         <section

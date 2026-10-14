@@ -303,14 +303,19 @@ export async function cancelJudge(requestId: string): Promise<boolean> {
   return trackedInvoke<boolean>("cancel_judge", { requestId })
 }
 
-export async function listManagedEnvironments(): Promise<
-  ManagedEnvironmentSummary[]
-> {
+export async function listManagedEnvironments(
+  profileId: string | null = null
+): Promise<ManagedEnvironmentSummary[]> {
   if (!isTauri()) {
     return []
   }
 
-  return trackedInvoke<ManagedEnvironmentSummary[]>("list_managed_environments")
+  return trackedInvoke<ManagedEnvironmentSummary[]>(
+    "list_managed_environments",
+    {
+      profileId,
+    }
+  )
 }
 
 export async function inspectManagedEnvironment(
@@ -422,7 +427,10 @@ export async function deleteManagedEnvironment(
     throw new Error("Explicit delete confirmation is required.")
   }
 
-  await trackedInvoke<void>("delete_managed_environment", nativeRequest(request))
+  await trackedInvoke<void>(
+    "delete_managed_environment",
+    nativeRequest(request)
+  )
 }
 
 export async function listSubmissionHistory(): Promise<

@@ -677,6 +677,16 @@ fn load_environment_state_for_startup(path: &Path) -> Result<ManagedEnvironmentS
         .map_err(|_| "Managed environment recovery state could not be read.".to_owned())?
         .is_empty();
 
+    // A failed first start can leave the app-owned directory empty (for example when
+    // Arch PostgreSQL tools are not installed yet); that is unavailable, not an identity mismatch.
+    if state.runtime_root.is_dir()
+        && std::fs::read_dir(&state.runtime_root)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false)
+    {
+        return Ok(state);
+    }
+
     match ManagedPostgresRuntime::adopt(&state.runtime_root, &state.runtime_instance_id) {
         Ok(runtime) => {
             state.runtime = Some(runtime);
@@ -2613,6 +2623,20 @@ fn managed_environment_summary(record: &EnvironmentRecord) -> Option<ManagedEnvi
     })
 }
 
+fn environment_source_matches(
+    mode: EnvironmentMode,
+    selected_profile_id: Option<&str>,
+    bound_profile_id: Option<&str>,
+) -> bool {
+    match selected_profile_id {
+        None => mode == EnvironmentMode::Managed,
+        Some(profile_id) => {
+            mode == EnvironmentMode::ExternalSandbox
+                && bound_profile_id == Some(profile_id)
+        }
+    }
+}
+
 fn policy_error(message: &str) -> JudgeRunResult {
     JudgeRunResult {
         status: "error".to_owned(),
@@ -3092,19 +3116,43 @@ fn execute_external_sqlserver_select(
     execute_external_sqlserver_select_value(request, state.inner(), &SessionSecretVault)
 }
 
+fn list_environment_summaries(
+    state: &ManagedEnvironmentState,
+    profile_id: Option<&str>,
+) -> Result<Vec<ManagedEnvironmentSummary>, String> {
+    let mut environments = Vec::new();
+    for record in state.ledger.list() {
+        let bound_profile_id = if record.mode == EnvironmentMode::ExternalSandbox {
+            state
+                .store
+                .get_external_sandbox_target(&record.env_id)
+                .map_err(|_| "The external environment binding could not be read.".to_owned())?
+                .map(|target| target.profile_id)
+        } else {
+            None
+        };
+        if environment_source_matches(
+            record.mode,
+            profile_id,
+            bound_profile_id.as_deref(),
+        ) {
+            if let Some(summary) = managed_environment_summary(record) {
+                environments.push(summary);
+            }
+        }
+    }
+    Ok(environments)
+}
+
 #[tauri::command]
 fn list_managed_environments(
+    profile_id: Option<String>,
     state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<Vec<ManagedEnvironmentSummary>, String> {
     let state = state
         .lock()
         .map_err(|_| "Managed environment state is busy.".to_owned())?;
-    Ok(state
-        .ledger
-        .list()
-        .into_iter()
-        .filter_map(managed_environment_summary)
-        .collect())
+    list_environment_summaries(&state, profile_id.as_deref())
 }
 
 #[tauri::command]
@@ -3394,14 +3442,18 @@ mod tests {
         external_profile_config_value, external_sqlserver_profile_config_value, import_pack_value,
         judge_cases, judge_request, list_connection_profiles_value, list_installed_packs_value,
         load_environment_state, load_environment_state_for_startup, managed_environment_summary,
-        managed_pack_identity, managed_runtime_status_value, provision_record,
+        list_environment_summaries, managed_pack_identity, managed_runtime_status_value,
+        provision_record,
         reconcile_environment_recovery, register_cancellation, require_postgres_read_only,
         require_sqlserver_read_only, reset_managed_environment_value, restore_backup_json_value,
         restore_backup_value, save_connection_profile_value, sql_value_json,
+        environment_source_matches,
         validate_external_sql_request, validate_secret_ref, verdict_name,
         with_verified_postgres_explorer, with_verified_sqlserver_explorer,
     };
-    use environment_manager::{EnvironmentMode, EnvironmentRecord, EnvironmentState};
+    use environment_manager::{
+        EnvironmentMode, EnvironmentRecord, EnvironmentState, ExternalSandboxTarget,
+    };
     use judge_core::SqlValue;
     use std::path::Path;
     use std::process::Command;
@@ -4557,6 +4609,28 @@ mod tests {
         let state = load_environment_state_for_startup(&root.join("state.sqlite"))
             .expect("load clean startup state");
 
+        assert!(state.runtime.is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_with_empty_runtime_directory_does_not_fail_identity_verification() {
+        let root = std::env::temp_dir().join(format!(
+            "sql-judge-tauri-empty-runtime-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).expect("create test root");
+        let path = root.join("state.sqlite");
+        let state = load_environment_state(&path).expect("load initial state");
+        std::fs::create_dir(&state.runtime_root).expect("create empty runtime directory");
+        drop(state);
+
+        let state = load_environment_state_for_startup(&path)
+            .expect("empty runtime should be treated as unavailable");
         assert!(state.runtime.is_none());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -6325,5 +6399,106 @@ mod tests {
             state: EnvironmentState::Ready,
         };
         assert!(managed_environment_summary(&external).is_none());
+    }
+
+    #[test]
+    fn environment_source_filter_keeps_local_and_matches_external_profile() {
+        assert!(environment_source_matches(
+            EnvironmentMode::Managed,
+            None,
+            None
+        ));
+        assert!(!environment_source_matches(
+            EnvironmentMode::Managed,
+            Some("profile-a"),
+            None
+        ));
+        assert!(environment_source_matches(
+            EnvironmentMode::ExternalSandbox,
+            Some("profile-a"),
+            Some("profile-a")
+        ));
+        assert!(!environment_source_matches(
+            EnvironmentMode::ExternalSandbox,
+            Some("profile-b"),
+            Some("profile-a")
+        ));
+    }
+
+    #[test]
+    fn environment_listing_uses_durable_external_profile_bindings() {
+        let root = std::env::temp_dir().join(format!(
+            "sql-judge-environment-listing-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).expect("create test root");
+        let mut state = load_environment_state(&root.join("state.sqlite"))
+            .expect("load environment state");
+        let make_record = |env_id: &str, mode: EnvironmentMode| EnvironmentRecord {
+            env_id: env_id.to_owned(),
+            instance_id: format!("instance-{env_id}"),
+            pack_id: "pack-a".to_owned(),
+            pack_version: "1.0.0".to_owned(),
+            pack_digest: "a".repeat(64),
+            namespace: format!("sj_{env_id}"),
+            ownership_nonce: format!("nonce-{env_id}"),
+            mode,
+            state: EnvironmentState::Ready,
+        };
+        for (record, profile_id) in [
+            (make_record("local", EnvironmentMode::Managed), None),
+            (
+                make_record("external_a", EnvironmentMode::ExternalSandbox),
+                Some("profile-a"),
+            ),
+            (
+                make_record("external_b", EnvironmentMode::ExternalSandbox),
+                Some("profile-b"),
+            ),
+        ] {
+            state
+                .ledger
+                .create(record.clone())
+                .expect("create environment record");
+            state
+                .store
+                .save_environment(&record)
+                .expect("save environment record");
+            if let Some(profile_id) = profile_id {
+                state
+                    .store
+                    .save_external_sandbox_target(
+                        &record.env_id,
+                        &ExternalSandboxTarget {
+                            profile_id: profile_id.to_owned(),
+                            server_identity: "server-a".to_owned(),
+                            database_identity: "database-a".to_owned(),
+                        },
+                    )
+                    .expect("save external binding");
+            }
+        }
+
+        assert_eq!(
+            list_environment_summaries(&state, None)
+                .expect("list local environments")
+                .iter()
+                .map(|environment| environment.env_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local"]
+        );
+        assert_eq!(
+            list_environment_summaries(&state, Some("profile-a"))
+                .expect("list profile environments")
+                .iter()
+                .map(|environment| environment.env_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["external_a"]
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

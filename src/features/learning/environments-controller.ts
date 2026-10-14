@@ -13,7 +13,12 @@ import {
   type PendingAction,
 } from "./environments-commands"
 import { useEnvironmentData } from "./environments-data"
-import { namespaceError, uniqueNamespace } from "./environments-model"
+import {
+  namespaceError,
+  environmentProfileSelection,
+  postgresqlProfiles,
+  uniqueNamespace,
+} from "./environments-model"
 import { learningLoadPhase } from "./load-state"
 
 export type EnvironmentMessage = { text: string; alert: boolean }
@@ -21,11 +26,14 @@ export type EnvironmentMessage = { text: string; alert: boolean }
 export function useEnvironments() {
   const data = useEnvironmentData()
   const { environments, setBusy } = data
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
+    null
+  )
   const [message, setMessage] = useState<EnvironmentMessage | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
 
   async function refresh(): Promise<boolean> {
-    const refreshed = await data.refresh()
+    const refreshed = await data.refresh(selectedProfileId)
     if (refreshed) {
       setMessage(null)
     } else {
@@ -40,7 +48,18 @@ export function useEnvironments() {
 
   function retry() {
     setMessage(null)
-    data.retry()
+    void data.refresh(selectedProfileId)
+  }
+
+  async function selectProfile(profileId: string | null) {
+    setSelectedProfileId(profileId)
+    setMessage(null)
+    if (!(await data.refresh(profileId))) {
+      setMessage({
+        text: "The selected environment source could not be loaded.",
+        alert: true,
+      })
+    }
   }
 
   async function startRuntime() {
@@ -196,7 +215,13 @@ export function useEnvironments() {
     phase: learningLoadPhase(data.loading, data.error, environments.length > 0),
     message,
     pendingAction,
+    postgresProfiles: postgresqlProfiles(data.profiles),
+    selectedProfileId: environmentProfileSelection(
+      selectedProfileId,
+      data.profiles
+    ),
     refresh,
+    selectProfile,
     retry,
     startRuntime,
     createEnvironment,

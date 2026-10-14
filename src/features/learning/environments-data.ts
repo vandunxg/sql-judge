@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import {
   getManagedRuntimeStatus,
@@ -11,11 +11,12 @@ import {
   type ManagedRuntimeStatus,
 } from "@/lib/judge-api"
 import { learningLoadErrorMessage } from "./load-state"
+import { isCurrentEnvironmentLoad } from "./environments-model"
 
-function loadAll() {
+function loadAll(profileId: string | null) {
   return Promise.all([
     getManagedRuntimeStatus(),
-    listManagedEnvironments(),
+    listManagedEnvironments(profileId),
     listInstalledPacks(),
     listConnectionProfiles(),
   ])
@@ -34,10 +35,14 @@ export function useEnvironmentData() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
+  const loadGeneration = useRef(0)
 
-  function applyLoaded([status, records, installed, connectionProfiles]: Awaited<
-    ReturnType<typeof loadAll>
-  >) {
+  function applyLoaded([
+    status,
+    records,
+    installed,
+    connectionProfiles,
+  ]: Awaited<ReturnType<typeof loadAll>>) {
     setRuntimeStatus(status)
     setEnvironments(records)
     setPacks(installed)
@@ -55,11 +60,25 @@ export function useEnvironmentData() {
 
   useEffect(() => {
     let active = true
-    void loadAll()
-      .then((loaded) => active && applyLoaded(loaded))
-      .catch(() => active && applyFailed())
+    const loadId = ++loadGeneration.current
+    void loadAll(null)
+      .then(
+        (loaded) =>
+          active &&
+          isCurrentEnvironmentLoad(loadId, loadGeneration.current) &&
+          applyLoaded(loaded)
+      )
+      .catch(
+        () =>
+          active &&
+          isCurrentEnvironmentLoad(loadId, loadGeneration.current) &&
+          applyFailed()
+      )
       .finally(() => {
-        if (active) {
+        if (
+          active &&
+          isCurrentEnvironmentLoad(loadId, loadGeneration.current)
+        ) {
           setLoading(false)
           setBusy(false)
         }
@@ -69,19 +88,36 @@ export function useEnvironmentData() {
     }
   }, [reloadToken])
 
-  async function refresh(): Promise<boolean> {
+  async function refresh(profileId: string | null = null): Promise<boolean> {
+    const loadId = ++loadGeneration.current
     setLoading(true)
     setError(null)
     setBusy(true)
     try {
-      applyLoaded(await loadAll())
+      let loaded = await loadAll(profileId)
+      if (
+        profileId &&
+        !loaded[3].some(
+          (profile) =>
+            profile.profileId === profileId && profile.engine === "postgresql"
+        )
+      ) {
+        loaded = await loadAll(null)
+      }
+      if (isCurrentEnvironmentLoad(loadId, loadGeneration.current)) {
+        applyLoaded(loaded)
+      }
       return true
     } catch {
-      applyFailed()
+      if (isCurrentEnvironmentLoad(loadId, loadGeneration.current)) {
+        applyFailed()
+      }
       return false
     } finally {
-      setLoading(false)
-      setBusy(false)
+      if (isCurrentEnvironmentLoad(loadId, loadGeneration.current)) {
+        setLoading(false)
+        setBusy(false)
+      }
     }
   }
 

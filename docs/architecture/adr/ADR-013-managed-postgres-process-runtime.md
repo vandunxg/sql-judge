@@ -62,6 +62,9 @@ Linux shell. The runtime now:
   `remove_dir_all` (initdb removes what it wrote), and a failed first start only
   removes the root when no server is running in it, so a concurrent first launch
   cannot delete the winner's cluster.
+- **Joins pack-internal paths with `/` (problem-pack).** Problem reference and
+  fixture paths were built with `Path::join`, which inserts `\` on Windows, so
+  every pack failed structural validation there. Found by the Windows runner.
 - **Uses loopback TCP on Windows.** rust-postgres has no Unix sockets on Windows
   and peer authentication does not exist there. The cluster is initialised with
   `scram-sha-256`, listens on `127.0.0.1` only, and uses a port chosen free on

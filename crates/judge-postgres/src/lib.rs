@@ -879,8 +879,16 @@ impl CancellationWatcher {
         let handle = thread::spawn(move || {
             while !watcher_stop.load(Ordering::Acquire) {
                 if cancellation.is_cancelled() {
+                    // A cancel that reaches the backend before the query starts is ignored, so
+                    // repeat it every 100ms until the query ends and the watcher is stopped.
                     let _ = cancel_token.cancel_query(NoTls);
-                    break;
+                    for _ in 0..20 {
+                        if watcher_stop.load(Ordering::Acquire) {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    continue;
                 }
                 thread::sleep(Duration::from_millis(5));
             }

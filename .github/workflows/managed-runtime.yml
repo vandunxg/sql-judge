@@ -11,6 +11,8 @@ on:
       - "crates/problem-pack/**"
       - "src-tauri/**"
       - "Cargo.lock"
+      - "examples/**"
+      - "scripts/smoke_packaged_import*"
       - ".github/workflows/managed-runtime.yml"
   pull_request:
   workflow_dispatch:

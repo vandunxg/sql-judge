@@ -101,7 +101,7 @@ jobs:
 
   bundle:
     # Real installers for a human smoke test, plus an automated install through the packaged
-    # app's own UI (Accessibility on macOS, tauri-driver on Windows).
+    # app's own UI (Accessibility on macOS, UI Automation on Windows).
     needs: runtime
     if: github.event_name != 'pull_request'
     strategy:
@@ -219,17 +219,8 @@ jobs:
 
       - name: Import a pack through the installed app UI (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo install tauri-driver --locked
-          cargo install --git https://github.com/chippers/msedgedriver-tool
-          msedgedriver-tool
-          $driver = Start-Process -FilePath tauri-driver -ArgumentList '--native-driver', "$PWD\msedgedriver.exe" -PassThru
-          Start-Sleep 3
-          python scripts/smoke_packaged_import.py --app $env:SQL_JUDGE_APP --pack "$PWD\examples\hr-analytics.sqljudge.zip"
-          $code = $LASTEXITCODE
-          Stop-Process -Id $driver.Id -Force -ErrorAction SilentlyContinue
-          exit $code
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke_packaged_import_windows.ps1 -App $env:SQL_JUDGE_APP -Pack "$PWD\examples\hr-analytics.sqljudge.zip"
 
       - name: Capture the screen on failure (macOS)
         if: failure() && runner.os == 'macOS'

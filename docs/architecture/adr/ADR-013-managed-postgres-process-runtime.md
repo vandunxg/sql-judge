@@ -89,8 +89,8 @@ Linux shell. The runtime now:
   there panics, which aborts the release build).
 
 The instance marker and `NOLOGIN` runner role are unchanged on every platform.
-`.github/workflows/managed-runtime.yml` runs the runtime and native import tests
-on `macos-latest` and `windows-latest` with PostgreSQL left off PATH (and again
+`.github/workflows/managed-runtime.yml` (on pushes to `main` and `release/**`,
+see ADR-029) runs the runtime and native import tests on `macos-latest` and `windows-latest` with PostgreSQL left off PATH (and again
 on macOS under launchd's GUI environment), since these platforms cannot be
 exercised on a Linux workstation. It also uploads the NSIS installer and both
 DMGs as workflow artifacts and installs `examples/hr-analytics.sqljudge.zip`

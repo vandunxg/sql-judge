@@ -80,7 +80,7 @@ user without `sudo`:
 curl -fsSL https://raw.githubusercontent.com/vandunxg/sql-judge/main/scripts/install-linux.sh | bash -s -- --user
 ```
 
-Only Linux `x86_64` is published in the first release. The installer refuses
+The installer supports Linux `x86_64` only. It refuses
 to install when the release checksum is absent or invalid. Installing SQL
 Judge does not install PostgreSQL; configure the required local PostgreSQL
 runtime separately before running judged exercises. SQL Judge finds PostgreSQL
@@ -105,6 +105,23 @@ bun run test:pg-harness
 ```
 
 Use `bun run tauri dev` for the desktop shell. Do not claim platform packaging support without running the matching artifact build and install smoke test.
+
+## CI and releases
+
+CI (`.github/workflows/managed-runtime.yml`) runs only on pushes to `main` and `release/**` that touch the runtime, pack, app or example paths, plus manual runs from the Actions tab. Other branches and pull requests do not start CI, so run the affected suites above before merging. See ADR-029.
+
+Release changes are listed in `CHANGELOG.md`. To cut a release:
+
+1. On a `release/vX.Y.Z` branch, set the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and the `tauri-native` entry of `src-tauri/Cargo.lock`.
+2. Add a dated `## [X.Y.Z] - YYYY-MM-DD` section at the top of `CHANGELOG.md`.
+3. Check both release contracts:
+
+   ```bash
+   bash scripts/test_release_version.sh
+   bash scripts/test_ci_workflow.sh
+   ```
+
+4. Commit, tag `vX.Y.Z` with the changelog section as its message, and push the branch and the tag. The tag starts `.github/workflows/release.yml`, which builds every platform and publishes the release once all assets are uploaded.
 
 ## Using problem packs
 
@@ -142,6 +159,7 @@ See `docs/agents/WORKFLOW.md` for task handoff and commit expectations.
 - Testing rules: `docs/testing/`
 - Design system and screen artboards: `docs/design/`
 - Operations and release guidance: `docs/operations/`
+- Release history: `CHANGELOG.md`
 
 ## License
 

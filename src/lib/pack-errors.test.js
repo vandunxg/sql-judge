@@ -27,6 +27,9 @@ describe("readPackImportError", () => {
     expect(
       readPackImportError("Managed PostgreSQL runtime could not be started.")
     ).toContain("pg_ctl")
+    expect(
+      readPackImportError("Managed PostgreSQL runtime could not be started.")
+    ).not.toContain("PATH")
   })
 
   test("preserves safe runtime validation coordinates", () => {

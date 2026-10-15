@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use tauri::webview::PageLoadEvent;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_opener::OpenerExt;
 
@@ -3265,12 +3265,24 @@ fn delete_managed_environment(
     delete_managed_environment_value(request, state.inner())
 }
 
+/// A first import runs initdb, starts the server and validates every reference, so it must not
+/// block the main thread (a plain command runs there and freezes the window). It runs on its own
+/// OS thread because the sync postgres client owns a Tokio runtime that panics when dropped
+/// inside Tauri's async runtime.
 #[tauri::command]
-fn import_pack(
+async fn import_pack(
+    app: AppHandle,
     request: ImportPackRequest,
-    state: State<'_, Mutex<ManagedEnvironmentState>>,
 ) -> Result<PackImportResult, String> {
-    import_pack_value(request, state.inner())
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    std::thread::spawn(move || {
+        let state = app.state::<Mutex<ManagedEnvironmentState>>();
+        let _ = sender.blocking_send(import_pack_value(request, state.inner()));
+    });
+    receiver
+        .recv()
+        .await
+        .unwrap_or_else(|| Err("Pack runtime validation or publication failed.".to_owned()))
 }
 
 #[tauri::command]
@@ -3873,6 +3885,37 @@ mod tests {
         }
         assert!(namespace_exists(&state, &namespace));
         assert_eq!(sandbox_row_count(&state, &namespace), SqlValue::Signed(0));
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_import_works_from_a_macos_style_data_dir_with_finder_metadata() {
+        let root = test_root("macos-import");
+        let data_dir = root
+            .join("Library")
+            .join("Application Support")
+            .join("com.dungnv1.sql-judge");
+        std::fs::create_dir_all(&data_dir).expect("create spaced data dir");
+        let pack = root.join("Downloads").join("hr analytics");
+        copy_tree(&sample_pack_dir(), &pack);
+        std::fs::write(pack.join(".DS_Store"), b"\0\0\0\x01Bud1").expect("write .DS_Store");
+        std::fs::write(pack.join("schema").join("._001-schema.sql"), b"AppleDouble")
+            .expect("write AppleDouble file");
+        let state = Mutex::new(
+            load_environment_state(&data_dir.join("sql-judge.sqlite")).expect("load native state"),
+        );
+
+        let result = import_pack_value(
+            ImportPackRequest {
+                path: pack.to_string_lossy().into_owned(),
+            },
+            &state,
+        )
+        .expect("import pack from a Finder-browsed folder");
+
+        assert_eq!(result.status, "published");
+        assert_eq!(result.pack_id, "hr-analytics");
         drop(state);
         let _ = std::fs::remove_dir_all(root);
     }

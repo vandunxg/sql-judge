@@ -1,0 +1,288 @@
+name: Managed runtime
+
+# ADR-013 amendment: proves the managed PostgreSQL runtime and pack import on the desktop
+# platforms that cannot be exercised on a Linux workstation. PostgreSQL is deliberately left
+# off PATH, as it is for an app launched from Finder or the Start menu.
+
+on:
+  push:
+    paths:
+      - "crates/judge-postgres/**"
+      - "crates/problem-pack/**"
+      - "src-tauri/**"
+      - "Cargo.lock"
+      - "examples/**"
+      - "scripts/smoke_packaged_import*"
+      - ".github/workflows/managed-runtime.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Install keg-only PostgreSQL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@17
+          # Unlink any image-provided PostgreSQL so the job proves install-location discovery.
+          brew list --formula | grep '^postgresql' | xargs -n1 brew unlink || true
+
+      - name: Ensure PostgreSQL is installed (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem "$env:ProgramFiles\PostgreSQL\*\bin\initdb.exe" -ErrorAction SilentlyContinue)) {
+            choco install postgresql17 --no-progress -y --params '/Password:ci-only-unused'
+          }
+          Get-ChildItem "$env:ProgramFiles\PostgreSQL\*\bin\initdb.exe"
+
+      - name: Report whether PostgreSQL is on PATH
+        shell: bash
+        run: |
+          if command -v initdb; then
+            echo "::warning::initdb is on PATH, so this run does not prove install-location discovery"
+          fi
+
+      - name: Managed runtime tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p judge-postgres --lib runtime::
+          cargo test -p judge-postgres --test runtime
+
+      - name: Native pack import tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml native_import
+
+      - name: Repeat under a Finder-like environment (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          # launchd gives GUI apps this PATH and no LANG; run the built test binaries the same way.
+          test_binary() {
+            cargo test "$@" --no-run --message-format=json 2>/dev/null |
+              jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' |
+              head -n1
+          }
+          finder_env=(env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" TMPDIR="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin)
+          "${finder_env[@]}" "$(test_binary -p judge-postgres --test runtime)"
+          "${finder_env[@]}" "$(test_binary --manifest-path src-tauri/Cargo.toml --lib)" native_import
+
+      - name: Show raw PostgreSQL output under a Finder-like environment (macOS, on failure)
+        if: failure() && runner.os == 'macOS'
+        run: |
+          bin="$(brew --prefix postgresql@17)/bin"
+          dir="$(mktemp -d)"
+          finder_env=(env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" TMPDIR="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin)
+          "${finder_env[@]}" "$bin/initdb" -D "$dir/data" --username "$USER" --auth-local=peer --auth-host=reject --encoding=UTF8 --locale=C || true
+          mkdir -p "$dir/socket"
+          "${finder_env[@]}" "$bin/pg_ctl" -D "$dir/data" -l "$dir/server.log" -o "-k '$dir/socket' -c listen_addresses=''" -w start || true
+          cat "$dir/server.log" || true
+          "${finder_env[@]}" "$bin/pg_ctl" -D "$dir/data" -w stop -m fast || true
+
+  bundle:
+    # Real installers for a human smoke test, plus an automated install through the packaged
+    # app's own UI (Accessibility on macOS, UI Automation on Windows).
+    needs: runtime
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-nsis
+            platform: windows-latest
+            target: ""
+            args: --bundles nsis
+            bundle: src-tauri/target/release/bundle
+          - name: macos-apple-silicon
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles app,dmg
+            bundle: src-tauri/target/aarch64-apple-darwin/release/bundle
+          - name: macos-intel
+            platform: macos-15-intel
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles app,dmg
+            bundle: src-tauri/target/x86_64-apple-darwin/release/bundle
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install keg-only PostgreSQL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@17
+          brew list --formula | grep '^postgresql' | xargs -n1 brew unlink || true
+
+      - name: Ensure PostgreSQL is installed (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem "$env:ProgramFiles\PostgreSQL\*\bin\initdb.exe" -ErrorAction SilentlyContinue)) {
+            choco install postgresql17 --no-progress -y --params '/Password:ci-only-unused'
+          }
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Build installer
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        run: bun run tauri build ${{ matrix.args }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-judge-${{ matrix.name }}
+          path: |
+            ${{ matrix.bundle }}/dmg/*.dmg
+            ${{ matrix.bundle }}/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Launch the packaged app through LaunchServices (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          app=$(ls -d "${{ matrix.bundle }}"/macos/*.app | head -n1)
+          open "$app"
+          database="$HOME/Library/Application Support/com.dungnv1.sql-judge/sql-judge.sqlite"
+          for _ in $(seq 30); do [ -f "$database" ] && break; sleep 2; done
+          test -f "$database"
+          pgrep -f "$app/Contents/MacOS/" >/dev/null
+          pkill -f "$app/Contents/MacOS/" || true
+
+      - name: Import a pack through the packaged app UI (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          app=$(ls -d "${{ matrix.bundle }}"/macos/*.app | head -n1)
+          process=$(basename "$(ls "$app"/Contents/MacOS/* | head -n1)")
+          open "$app"
+          osascript scripts/smoke_packaged_import_macos.applescript "$process" "$PWD/examples/hr-analytics.sqljudge.zip"
+          pkill -f "$app/Contents/MacOS/" || true
+
+      - name: Install silently and launch the packaged app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "${{ matrix.bundle }}/nsis/*.exe" | Select-Object -First 1
+          Start-Process -Wait -FilePath $installer.FullName -ArgumentList '/S'
+          $app = Get-ChildItem "$env:LOCALAPPDATA\sql-judge" -Filter *.exe |
+            Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1
+          if (-not $app) { throw "Installed executable was not found." }
+          $process = Start-Process -FilePath $app.FullName -PassThru
+          $database = "$env:LOCALAPPDATA\com.dungnv1.sql-judge\sql-judge.sqlite"
+          for ($i = 0; $i -lt 30 -and -not (Test-Path $database); $i++) { Start-Sleep 2 }
+          if (-not (Test-Path $database)) { throw "The app did not create its database." }
+          if ($process.HasExited) { throw "The app exited with code $($process.ExitCode)." }
+          Stop-Process -Id $process.Id -Force
+          # Leftover WebView2 processes keep the user data folder and break the next session.
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force
+          "SQL_JUDGE_APP=$($app.FullName)" >> $env:GITHUB_ENV
+
+      - name: Import a pack through the installed app UI (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke_packaged_import_windows.ps1 -App $env:SQL_JUDGE_APP -Pack "$PWD\examples\hr-analytics.sqljudge.zip"
+
+      - name: Capture the screen on failure (macOS)
+        if: failure() && runner.os == 'macOS'
+        run: screencapture -x "$RUNNER_TEMP/failure.png"
+
+      - name: Upload the failure screenshot (macOS)
+        if: failure() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-screen-${{ matrix.name }}
+          path: ${{ runner.temp }}/failure.png
+          if-no-files-found: ignore
+
+  e2e-linux:
+    # The same UI import as on Windows, against the release binary under WebKitWebDriver.
+    needs: runtime
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb
+          ls /usr/lib/postgresql/*/bin/initdb
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Build the release binary
+        run: bun run tauri build --no-bundle
+
+      - name: Import a pack through the app UI
+        run: |
+          set -euo pipefail
+          cargo install tauri-driver --locked
+          xvfb-run -a bash -c '
+            tauri-driver & driver=$!
+            sleep 3
+            app=$(ls src-tauri/target/release/sql-judge src-tauri/target/release/tauri-native 2>/dev/null | head -n1)
+            python3 scripts/smoke_packaged_import.py --app "$PWD/$app" --pack "$PWD/examples/hr-analytics.sqljudge.zip"
+            code=$?
+            kill $driver || true
+            exit $code
+          '

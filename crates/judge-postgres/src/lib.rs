@@ -2,7 +2,7 @@ use fallible_iterator::FallibleIterator;
 use judge_core::{Column, LogicalType, QueryLimits, QueryResult, SqlValue};
 use postgres::{
     Client, Config, GenericClient, NoTls, Row,
-    config::SslMode,
+    config::{Host, SslMode},
     types::{FromSql, ToSql, Type},
 };
 use postgres_native_tls::MakeTlsConnector;
@@ -718,7 +718,35 @@ fn is_loopback_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::WriteCapabilitySnapshot;
+    use super::{WriteCapabilitySnapshot, local_connection_config};
+
+    #[test]
+    fn local_connection_policy_parses_quoted_values_and_rejects_remote_targets() {
+        #[cfg(unix)]
+        assert!(
+            local_connection_config(
+                "host='/Users/a b/Library/Application Support/x/socket' user='a b' dbname=postgres"
+            )
+            .is_some()
+        );
+        assert!(
+            local_connection_config(
+                "host=127.0.0.1 port=50123 user='runner' password='it\\'s' dbname=postgres"
+            )
+            .is_some()
+        );
+        for remote in [
+            "host=db.example.com user=a dbname=postgres",
+            "host=127.0.0.1,db.example.com user=a dbname=postgres",
+            "host='127.0.0.1 ' user=a dbname=postgres",
+            "hostaddr=10.0.0.1 user=a dbname=postgres",
+            "user=a dbname=postgres",
+            "postgres://a@127.0.0.1/postgres",
+            "host=/tmp user='unterminated dbname=postgres",
+        ] {
+            assert!(local_connection_config(remote).is_none(), "{remote}");
+        }
+    }
 
     #[test]
     fn read_only_requires_all_write_capabilities_to_be_false() {
@@ -851,8 +879,16 @@ impl CancellationWatcher {
         let handle = thread::spawn(move || {
             while !watcher_stop.load(Ordering::Acquire) {
                 if cancellation.is_cancelled() {
+                    // A cancel that reaches the backend before the query starts is ignored, so
+                    // repeat it every 100ms until the query ends and the watcher is stopped.
                     let _ = cancel_token.cancel_query(NoTls);
-                    break;
+                    for _ in 0..20 {
+                        if watcher_stop.load(Ordering::Acquire) {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    continue;
                 }
                 thread::sleep(Duration::from_millis(5));
             }
@@ -1003,10 +1039,10 @@ impl ManagedPostgresSession {
 
 impl PostgresSession {
     pub fn connect(connection_string: &str) -> Result<Self, QueryExecutionError> {
-        if !is_local_connection_string(connection_string) {
-            return Err(QueryExecutionError::PolicyViolation);
-        }
-        Client::connect(connection_string, NoTls)
+        let config = local_connection_config(connection_string)
+            .ok_or(QueryExecutionError::PolicyViolation)?;
+        config
+            .connect(NoTls)
             .map(|client| Self { client })
             .map_err(|_| QueryExecutionError::ConnectionError)
     }
@@ -1590,29 +1626,26 @@ fn is_safe_role_name(role: &str) -> bool {
         })
 }
 
-fn is_local_connection_string(connection_string: &str) -> bool {
+/// Parses with the driver itself so quoted values (macOS "Application Support" socket paths)
+/// are checked exactly as they will be connected.
+fn local_connection_config(connection_string: &str) -> Option<Config> {
     if connection_string.starts_with("postgres://")
         || connection_string.starts_with("postgresql://")
     {
-        return false;
+        return None;
     }
-    let mut saw_target = false;
-    for part in connection_string.split_whitespace() {
-        let Some(host) = part
-            .strip_prefix("host=")
-            .or_else(|| part.strip_prefix("hostaddr="))
-        else {
-            continue;
-        };
-        saw_target = true;
-        if host.starts_with('/') {
-            continue;
-        }
-        if !matches!(host, "127.0.0.1" | "::1" | "localhost") {
-            return false;
-        }
-    }
-    saw_target
+    let config: Config = connection_string.parse().ok()?;
+    let hosts_are_local = config.get_hosts().iter().all(|host| match host {
+        Host::Tcp(name) => matches!(name.as_str(), "127.0.0.1" | "::1" | "localhost"),
+        #[cfg(unix)]
+        Host::Unix(_) => true,
+    });
+    let addresses_are_local = config
+        .get_hostaddrs()
+        .iter()
+        .all(|address| address.is_loopback());
+    let has_target = !config.get_hosts().is_empty() || !config.get_hostaddrs().is_empty();
+    (has_target && hosts_are_local && addresses_are_local).then_some(config)
 }
 
 fn unique_fixture_suffix() -> String {

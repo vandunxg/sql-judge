@@ -647,6 +647,36 @@ fn session_driver_cancellation_interrupts_an_in_flight_query() {
 }
 
 #[test]
+fn cancellation_racing_query_start_still_stops_the_query() {
+    // A cancel request that reaches an idle backend is ignored, so a token cancelled while the
+    // query is still being sent must not let it run on to the statement timeout.
+    let server = TestServer::start();
+    for step in 0..40_u64 {
+        let session =
+            PostgresSession::connect(&server.connection_string()).expect("connect runner");
+        let token = CancellationToken::default();
+        let worker_token = token.clone();
+        let started = std::time::Instant::now();
+        let handle = std::thread::spawn(move || {
+            let mut session = session;
+            session.execute_with_cancel(
+                "SELECT count(*) FROM generate_series(1, 1000000000)",
+                QueryLimits::new(10_000, 10, 64 * 1024),
+                &worker_token,
+            )
+        });
+        std::thread::sleep(std::time::Duration::from_micros(step * 500));
+        token.cancel();
+        assert!(handle.join().expect("query worker").is_err());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "cancel after {}us was lost",
+            step * 500
+        );
+    }
+}
+
+#[test]
 fn orchestrator_accepts_equivalent_window_query_and_rejects_hardcoded_rows() {
     let server = TestServer::start();
     let mut admin =

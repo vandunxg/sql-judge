@@ -135,15 +135,12 @@ impl ValidatedPack {
             return Ok(None);
         };
         let problem: ProblemManifest = json_file(&self.files, problem_path)?;
-        let root = Path::new(problem_path)
-            .parent()
-            .unwrap_or_else(|| Path::new(""));
-        let reference_path = root.join(&problem.reference).to_string_lossy().into_owned();
+        let reference_path = sibling_path(problem_path, &problem.reference);
         let tests = problem
             .tests
             .iter()
             .map(|test| {
-                let fixture_path = root.join(&test.file).to_string_lossy().into_owned();
+                let fixture_path = sibling_path(problem_path, &test.file);
                 Ok(ValidatedTest {
                     id: test.id.clone(),
                     hidden: test.hidden,
@@ -422,11 +419,11 @@ impl PackData {
             if name.split('/').count() > MAX_PATH_DEPTH {
                 return Err(PackError::ResourceLimit);
             }
-            if entry.is_dir() {
-                continue;
-            }
             if entry.is_symlink() {
                 return Err(PackError::Symlink(raw_name));
+            }
+            if entry.is_dir() || is_os_metadata(name) {
+                continue;
             }
             if !entry.is_file() {
                 return Err(PackError::NonRegularFile(raw_name));
@@ -878,13 +875,10 @@ fn validate_runtime(
 
     for problem_path in &pack.manifest.problems {
         let problem: ProblemManifest = json_file(&pack.files, problem_path)?;
-        let root = Path::new(problem_path)
-            .parent()
-            .ok_or_else(|| PackError::InvalidManifest("problem path has no parent".to_owned()))?;
-        let reference_path = root.join(&problem.reference).to_string_lossy().into_owned();
+        let reference_path = sibling_path(problem_path, &problem.reference);
         let reference = sql_file(&pack.files, &reference_path)?;
         for test in &problem.tests {
-            let test_path = root.join(&test.file).to_string_lossy().into_owned();
+            let test_path = sibling_path(problem_path, &test.file);
             let fixture = sql_file(&pack.files, &test_path)?;
             let result =
                 session.with_managed_fixture(runner_role, &schema_sql, &fixture, |session| {
@@ -913,10 +907,11 @@ fn validate_problem(
     expected: &mut BTreeSet<String>,
     problem_ids: &mut BTreeSet<String>,
 ) -> Result<(), PackError> {
-    let root = Path::new(path)
-        .parent()
+    let directory = path
+        .rsplit('/')
+        .nth(1)
         .ok_or_else(|| PackError::InvalidManifest("problem path has no parent".to_owned()))?;
-    if root.file_name().and_then(|name| name.to_str()) != Some(problem.id.as_str())
+    if directory != problem.id
         || !is_id(&problem.id)
         || !problem_ids.insert(problem.id.clone())
         || !(3..=140).contains(&problem.title.chars().count())
@@ -973,7 +968,7 @@ fn validate_problem(
         .map_err(|error| PackError::InvalidManifest(error.to_string()))?;
     validate_catalog(problem)?;
 
-    let reference_path = root.join(&problem.reference).to_string_lossy().into_owned();
+    let reference_path = sibling_path(path, &problem.reference);
     expected.insert(reference_path.clone());
     check_sql(files, &reference_path)?;
 
@@ -996,7 +991,7 @@ fn validate_problem(
         } else {
             visible += 1;
         }
-        let test_path = root.join(&test.file).to_string_lossy().into_owned();
+        let test_path = sibling_path(path, &test.file);
         expected.insert(test_path.clone());
         check_sql(files, &test_path)?;
     }
@@ -1251,6 +1246,9 @@ fn collect_directory(
         if metadata.file_type().is_symlink() {
             return Err(PackError::Symlink(name));
         }
+        if is_os_metadata(&name) {
+            continue;
+        }
         if metadata.is_dir() {
             collect_directory(root, &path, files, entry_count, depth + 1)?;
         } else if metadata.is_file() {
@@ -1305,6 +1303,14 @@ fn has_multiple_links(_path: &Path, _metadata: &fs::Metadata) -> Result<bool, Pa
     Ok(false)
 }
 
+/// Pack paths always use `/`; `Path::join` would insert `\` on Windows and miss every file.
+fn sibling_path(path: &str, file: &str) -> String {
+    match path.rsplit_once('/') {
+        Some((directory, _)) => format!("{directory}/{file}"),
+        None => file.to_owned(),
+    }
+}
+
 fn json_file<T: DeserializeOwned>(
     files: &BTreeMap<String, Vec<u8>>,
     name: &str,
@@ -1330,6 +1336,17 @@ fn sql_file(files: &BTreeMap<String, Vec<u8>>, name: &str) -> Result<String, Pac
 
 fn check_sql(files: &BTreeMap<String, Vec<u8>>, name: &str) -> Result<(), PackError> {
     sql_file(files, name).map(|_| ())
+}
+
+/// Finder and Explorer drop these into any folder they open or compress; they are never pack
+/// content, so they are skipped unread and excluded from the digest.
+fn is_os_metadata(name: &str) -> bool {
+    let file = name.rsplit('/').next().unwrap_or(name);
+    name.split('/').next() == Some("__MACOSX")
+        || file.starts_with("._")
+        || [".DS_Store", "Thumbs.db", "desktop.ini"]
+            .iter()
+            .any(|metadata| file.eq_ignore_ascii_case(metadata))
 }
 
 fn validate_path(name: &str) -> Result<(), PackError> {
@@ -1451,5 +1468,22 @@ fn symlink_metadata_if_present(path: &Path) -> Result<Option<std::fs::Metadata>,
         Ok(metadata) => Ok(Some(metadata)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sibling_path;
+
+    #[test]
+    fn sibling_paths_use_forward_slashes_on_every_platform() {
+        assert_eq!(
+            sibling_path("problems/top-earners/problem.json", "tests/basic.sql"),
+            "problems/top-earners/tests/basic.sql"
+        );
+        assert_eq!(
+            sibling_path("problem.json", "reference.sql"),
+            "reference.sql"
+        );
     }
 }

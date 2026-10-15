@@ -54,6 +54,8 @@ If docs conflict: explicit current user instruction > accepted PRD/AC > contract
 - No `#[allow(...)]`, `@ts-ignore`, eslint-disable, skipped tests, coverage reductions or fake verification without explicit justified review.
 - New dependency / workflow / migration / capability changes require a short decision record and review; do not pin arbitrary versions from memory.
 - No rewrite of generated `release.yml` or claimed successful six-platform packaging until actual matrix builds were run with PostgreSQL runtime included or explicitly documented as external prerequisite.
+- CI runs only on pushes to `main` and `release/**` (ADR-029). Feature branches and pull requests get no CI, so run the affected local suites before merging, and keep `bash scripts/test_ci_workflow.sh` passing when editing triggers.
+- A release bumps the app version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` together, adds a dated `CHANGELOG.md` section on top, passes `bash scripts/test_release_version.sh` and is tagged `vX.Y.Z` on `main` or `release/**`. Pushing the tag publishes the release; do not push it without the user's approval.
 - Release documentation must distinguish Tauri artifact packaging from PostgreSQL runtime installation; a checksum-verified installer is not evidence that the database runtime is bundled.
 - Never quietly lower thresholds to get green. Never claim test/build success without command output.
 

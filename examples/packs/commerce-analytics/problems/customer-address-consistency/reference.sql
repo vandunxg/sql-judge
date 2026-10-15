@@ -1,0 +1,1 @@
+SELECT COALESCE(c.id::text, r.customer_id::text, r.id::text) AS result_id, COALESCE(c.display_name, r.body, 'Anonymous review') AS result_label FROM customers c FULL JOIN reviews r ON r.customer_id=c.id ORDER BY result_id;

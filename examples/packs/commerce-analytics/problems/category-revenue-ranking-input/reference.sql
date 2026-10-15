@@ -1,0 +1,1 @@
+SELECT COALESCE(c.country_code, 'ALL') AS result_label, COUNT(o.id)::text AS result_id FROM customers c LEFT JOIN orders o ON o.customer_id=c.id GROUP BY ROLLUP(c.country_code) ORDER BY result_label;

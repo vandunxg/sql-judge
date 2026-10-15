@@ -5394,6 +5394,40 @@ mod tests {
     }
 
     #[test]
+    fn native_imports_commerce_analytics_zip_after_runtime_validation() {
+        let root = std::env::temp_dir().join(format!(
+            "sql-judge-tauri-commerce-import-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).expect("create test root");
+        let path = root.join("state.sqlite");
+        let mut native_state = load_environment_state(&path).expect("load native state");
+        ensure_managed_runtime(&mut native_state).expect("start managed runtime");
+        let state = Mutex::new(native_state);
+        let result = import_pack_value(
+            ImportPackRequest {
+                path: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../examples/commerce-analytics.sqljudge.zip")
+                    .to_string_lossy()
+                    .into_owned(),
+            },
+            &state,
+        )
+        .expect("import commerce analytics zip pack");
+
+        assert_eq!(result.status, "published");
+        assert_eq!(result.pack_id, "commerce-analytics");
+        assert_eq!(result.version, "1.0.0");
+        assert!(!result.digest.is_empty());
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn native_backup_rejects_a_managed_environment_without_an_imported_pack() {
         let root = std::env::temp_dir().join(format!(
             "sql-judge-tauri-backup-unimported-pack-{}-{}",

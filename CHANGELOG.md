@@ -3,6 +3,28 @@
 Notable changes to SQL Judge, newest first. Each version matches the app
 version in `src-tauri/tauri.conf.json` and is released from the tag `vX.Y.Z`.
 
+## [0.1.2] - 2026-10-15
+
+### Fixed
+
+- The Commerce Analytics pack can now complete managed runtime validation and
+  import successfully. Its self-contained fixtures may use `INSERT ... SELECT`
+  and safe `ON CONFLICT (...) DO NOTHING` setup statements.
+- PostgreSQL fixed-length `char(n)` result columns now decode as text rather
+  than failing as unsupported `bpchar` values.
+
+### Changed
+
+- Releases and release tags now require documented review of requirements,
+  acceptance criteria, architecture/security decisions, operator instructions
+  and changelog notes. See `docs/operations/RELEASE-DOCUMENTATION.md`.
+
+### Known limitations
+
+- SQL Judge does not bundle PostgreSQL. Install PostgreSQL 14 or later before
+  judging.
+- The one-command Linux installer supports `x86_64` only.
+
 ## [0.1.1] - 2026-10-15
 
 ### Fixed
@@ -57,5 +79,6 @@ Submit and typed verdicts, managed PostgreSQL environments, submission
 history with backup and restore, read-only PostgreSQL and SQL Server
 Explorer, and a checksum-verified Linux installer.
 
+[0.1.2]: https://github.com/vandunxg/sql-judge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/vandunxg/sql-judge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/vandunxg/sql-judge/releases/tag/v0.1.0

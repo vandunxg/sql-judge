@@ -1,0 +1,1 @@
+SELECT (c.id::text || '-' || w.id::text) AS result_id, c.name || ' / ' || w.name AS result_label FROM categories c CROSS JOIN warehouses w WHERE c.parent_id IS NULL AND w.active ORDER BY c.id, w.id FETCH FIRST 50 ROWS ONLY;

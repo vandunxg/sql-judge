@@ -1,0 +1,113 @@
+{
+  "id": "customers-registered-in-quarter",
+  "title": "Bài 008: customers registered in quarter",
+  "difficulty": "easy",
+  "topics": [
+    "data-types",
+    "uuid",
+    "timestamptz",
+    "numeric"
+  ],
+  "statement": "Dùng self join để trả về ID và tên nhân viên có quản lý trực tiếp, tăng dần theo ID. Đây là bài đọc dữ liệu: chỉ nộp một truy vấn SELECT hoặc WITH ... SELECT; không dùng INSERT, UPDATE, DELETE hay DDL.",
+  "dialect": "postgresql",
+  "reference": "reference.sql",
+  "output": {
+    "row_order": "ordered",
+    "strict_column_names": true,
+    "strict_column_types": true,
+    "columns": [
+      {
+        "name": "result_id",
+        "type": "integer"
+      },
+      {
+        "name": "result_label",
+        "type": "text"
+      }
+    ]
+  },
+  "limits": {
+    "statement_timeout_ms": 2000,
+    "max_rows": 10000,
+    "max_bytes": 16777216
+  },
+  "catalog": {
+    "schema": [
+      {
+        "name": "customers",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid"
+          },
+          {
+            "name": "display_name",
+            "type": "varchar"
+          },
+          {
+            "name": "country_code",
+            "type": "char(2)"
+          }
+        ]
+      },
+      {
+        "name": "orders",
+        "columns": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "customer_id",
+            "type": "uuid"
+          },
+          {
+            "name": "status",
+            "type": "varchar"
+          }
+        ]
+      }
+    ],
+    "sample_rows": [],
+    "starter_sql": "SELECT\n  -- choose the required columns\nFROM customers AS c;",
+    "sample_tables": [
+      {
+        "name": "customers",
+        "rows": [
+          {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "display_name": "Customer 1",
+            "country_code": "US"
+          }
+        ]
+      },
+      {
+        "name": "orders",
+        "rows": [
+          {
+            "id": 1,
+            "customer_id": "00000000-0000-0000-0000-000000000001",
+            "status": "paid"
+          }
+        ]
+      }
+    ]
+  },
+  "tests": [
+    {
+      "id": "basic",
+      "file": "tests/basic.sql",
+      "hidden": false
+    },
+    {
+      "id": "null-or-empty",
+      "file": "tests/null-or-empty.sql",
+      "hidden": true
+    },
+    {
+      "id": "ties-or-boundary",
+      "file": "tests/ties-or-boundary.sql",
+      "hidden": true
+    }
+  ]
+}

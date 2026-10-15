@@ -53,6 +53,28 @@ fn setup_policy_rejects_privileged_or_mutating_admin_sql() {
 }
 
 #[test]
+fn setup_policy_accepts_insert_select_for_self_contained_fixtures() {
+    assert_eq!(
+        validate_setup_sql(
+            "CREATE TABLE source_rows (id integer); CREATE TABLE target_rows (id integer); \
+             INSERT INTO target_rows SELECT id FROM source_rows"
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn setup_policy_accepts_insert_on_conflict_do_nothing() {
+    assert_eq!(
+        validate_setup_sql(
+            "CREATE TABLE target_rows (id integer PRIMARY KEY); \
+             INSERT INTO target_rows VALUES (1) ON CONFLICT (id) DO NOTHING"
+        ),
+        Ok(())
+    );
+}
+
+#[test]
 fn setup_policy_rejects_cross_namespace_and_database_qualified_pack_sql() {
     for sql in [
         "CREATE TABLE sj_other.evil (id integer)",

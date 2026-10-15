@@ -229,6 +229,23 @@ fn session_decodes_typed_rows_and_nulls() {
 }
 
 #[test]
+fn session_decodes_char_columns_as_text() {
+    let server = TestServer::start();
+    let mut session =
+        PostgresSession::connect(&server.connection_string()).expect("connect runner");
+
+    let result = session
+        .execute(
+            "SELECT 'US'::char(2) AS country_code",
+            QueryLimits::new(2_000, 10, 64 * 1024),
+        )
+        .expect("decode character column");
+
+    assert_eq!(result.columns[0].logical_type, LogicalType::Text);
+    assert_eq!(result.rows[0][0], SqlValue::Text("US".to_owned()));
+}
+
+#[test]
 fn session_decodes_numeric_rows_as_decimal_values() {
     let server = TestServer::start();
     let mut session =

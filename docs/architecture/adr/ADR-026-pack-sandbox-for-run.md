@@ -45,6 +45,11 @@ test's fixture, so different problems need different rows in the same tables.
   require the user's confirmation on the Environments screen.
 - Submit is unchanged. It keeps disposable fixture schemas, including hidden
   tests.
+- Setup SQL permits only `CREATE TABLE`, `CREATE INDEX` and `INSERT INTO`
+  statements in the managed namespace. Fixture inserts may use a `SELECT`
+  source and `ON CONFLICT ... DO NOTHING`; all other `DO` blocks, privileged
+  statements, cross-namespace identifiers and unsafe PostgreSQL capabilities
+  remain denied before execution.
 - The Solve screen prefers the sandbox when it shows the environment chip.
   Deleting a pack deletes its sandbox like any other environment of that pack.
 

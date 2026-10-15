@@ -1687,7 +1687,6 @@ pub fn validate_read_only_sql(sql: &str) -> Result<(), QueryExecutionError> {
         "copy",
         "call",
         "execute",
-        "do",
         "listen",
         "notify",
         "vacuum",
@@ -1752,7 +1751,6 @@ pub fn validate_setup_sql_for_namespace(
         "role",
         "schema",
         "sequence",
-        "select",
         "set",
         "trigger",
         "truncate",
@@ -1764,12 +1762,20 @@ pub fn validate_setup_sql_for_namespace(
             .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
             .filter(|token| !token.is_empty())
             .collect();
+        let has_forbidden_token = tokens.iter().enumerate().any(|(index, token)| {
+            if *token == "do" {
+                return index + 1 >= tokens.len()
+                    || tokens[index + 1] != "nothing"
+                    || !tokens[..index]
+                        .windows(2)
+                        .any(|window| window == ["on", "conflict"]);
+            }
+            FORBIDDEN.contains(token)
+                || (token.starts_with("pg_") && !is_allowed_pg_catalog_token(&statement, token))
+                || token.starts_with("lo_")
+        });
         if tokens.is_empty()
-            || tokens.iter().any(|token| {
-                FORBIDDEN.contains(token)
-                    || (token.starts_with("pg_") && !is_allowed_pg_catalog_token(&statement, token))
-                    || token.starts_with("lo_")
-            })
+            || has_forbidden_token
             || has_unsafe_qualified_identifier(&statement, namespace.as_deref())
             || !matches!(
                 tokens.as_slice(),
@@ -1975,7 +1981,9 @@ fn logical_type(postgres_type: &Type) -> Result<LogicalType, QueryExecutionError
         Type::NUMERIC => Ok(LogicalType::Numeric),
         Type::FLOAT4 | Type::FLOAT8 => Ok(LogicalType::Float),
         Type::BOOL => Ok(LogicalType::Boolean),
-        Type::TEXT | Type::VARCHAR | Type::CHAR | Type::NAME => Ok(LogicalType::Text),
+        Type::TEXT | Type::VARCHAR | Type::CHAR | Type::BPCHAR | Type::NAME => {
+            Ok(LogicalType::Text)
+        }
         Type::BYTEA => Ok(LogicalType::Binary),
         Type::DATE => Ok(LogicalType::Date),
         Type::TIMESTAMP => Ok(LogicalType::Timestamp),
@@ -2122,7 +2130,7 @@ fn decode_row(row: &Row) -> Result<Vec<SqlValue>, QueryExecutionError> {
                     })
                 })
                 .map_err(|_| QueryExecutionError::RuntimeError),
-            Type::TEXT | Type::VARCHAR | Type::CHAR | Type::NAME => row
+            Type::TEXT | Type::VARCHAR | Type::CHAR | Type::BPCHAR | Type::NAME => row
                 .try_get::<_, Option<String>>(index)
                 .map(|value| value.map_or(SqlValue::Null, SqlValue::Text))
                 .map_err(|_| QueryExecutionError::RuntimeError),

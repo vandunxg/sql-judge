@@ -1,0 +1,1 @@
+WITH RECURSIVE tree AS (SELECT id, parent_id, name FROM categories WHERE parent_id IS NULL UNION ALL SELECT c.id, c.parent_id, c.name FROM categories c JOIN tree t ON c.parent_id=t.id) SELECT id AS result_id, name AS result_label FROM tree ORDER BY id;

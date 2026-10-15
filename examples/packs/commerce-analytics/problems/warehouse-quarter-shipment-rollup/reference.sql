@@ -1,0 +1,1 @@
+SELECT o.id AS result_id, o.status AS result_label FROM orders o JOIN payments p ON p.order_id=o.id WHERE p.status='succeeded' EXCEPT SELECT o.id AS result_id, o.status AS result_label FROM orders o JOIN shipments s ON s.order_id=o.id WHERE s.status='delivered' ORDER BY result_id;

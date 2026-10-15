@@ -1,0 +1,20 @@
+INSERT INTO regions VALUES ('US','United States'),('CA','Canada'),('GB','United Kingdom'),('DE','Germany'),('JP','Japan'),('AU','Australia');
+INSERT INTO regional_targets SELECT region_code, 100000 + row_number() OVER () * 25000 FROM regions;
+INSERT INTO warehouses SELECT g, (ARRAY['US','CA','GB','DE','JP','AU'])[(g-1)%6+1], 'Warehouse ' || g, g <> 12, time '08:00' + (g % 4) * interval '30 minutes' FROM generate_series(1,12) g;
+INSERT INTO categories SELECT g, 'Category ' || g, CASE WHEN g <= 6 THEN NULL ELSE ((g-1)%6)+1 END, true FROM generate_series(1,24) g;
+INSERT INTO suppliers SELECT g, 'Supplier ' || g, (ARRAY['US','CA','GB','DE','JP','AU'])[(g-1)%6+1], g <> 50 FROM generate_series(1,50) g;
+INSERT INTO customers SELECT ('00000000-0000-0000-0000-' || lpad(g::text,12,'0'))::uuid, 'Customer ' || g, 'customer' || g || '@example.com', (ARRAY['US','CA','GB','DE','JP','AU'])[(g-1)%6+1], g % 17 <> 0, timestamptz '2024-01-01 09:00+00' + g * interval '9 hours' FROM generate_series(1,650) g;
+INSERT INTO customer_addresses SELECT g, ('00000000-0000-0000-0000-' || lpad(((g-1)%650+1)::text,12,'0'))::uuid, (ARRAY['US','CA','GB','DE','JP','AU'])[(g-1)%6+1], g || ' Market Street', CASE WHEN g % 11 = 0 THEN 'Suite ' || g ELSE NULL END, g <= 650, timestamp '2024-01-01 09:00' + g * interval '7 hours' FROM generate_series(1,750) g;
+INSERT INTO employees SELECT g, 'Employee ' || g, CASE WHEN g = 1 THEN NULL ELSE ((g-2)/5)+1 END, date '2020-01-01' + g, true FROM generate_series(1,100) g;
+INSERT INTO products SELECT g, 'SKU-' || lpad(g::text,4,'0'), 'Product ' || g, ((g-1)%24)+1, (g * 3.17)::numeric(12,2), g % 29 <> 0, CASE WHEN g % 29 = 0 THEN timestamp '2025-01-01' ELSE NULL END FROM generate_series(1,500) g;
+INSERT INTO product_suppliers SELECT g, ((g-1)%50)+1, 'SUP-' || ((g-1)%50+1) || '-' || g FROM generate_series(1,500) g;
+INSERT INTO product_suppliers SELECT ((g-1)%500)+1, ((g+17)%50)+1, 'ALT-' || ((g+17)%50+1) || '-' || g FROM generate_series(1,100) g;
+INSERT INTO inventory SELECT ((g-1)%12)+1, ((g-1)%500)+1, (g*7)%80, 10 FROM generate_series(1,750) g ON CONFLICT DO NOTHING;
+INSERT INTO promotions SELECT g, 'PROMO-' || g, date '2024-01-01' + g, date '2024-01-10' + g FROM generate_series(1,25) g;
+INSERT INTO orders SELECT g, ('00000000-0000-0000-0000-' || lpad(((g-1)%650+1)::text,12,'0'))::uuid, ((g-1)%750)+1, timestamptz '2024-03-01 08:00+00' + g * interval '5 hours', (ARRAY['pending','paid','cancelled','refunded','delivered'])[(g-1)%5+1], (g * 11.25)::numeric(12,2) FROM generate_series(1,900) g;
+INSERT INTO order_items SELECT g, ((g-1)%900)+1, ((g-1)%500)+1, ((g-1)%4)+1, (g * 2.13)::numeric(12,2) FROM generate_series(1,1900) g ON CONFLICT (order_id, product_id) DO NOTHING;
+INSERT INTO payments SELECT g, CASE WHEN g % 16 = 0 THEN NULL ELSE ((g-1)%900)+1 END, (ARRAY['pending','succeeded','failed','refunded'])[(g-1)%4+1], (g * 11.25)::numeric(12,2), 'USD', CASE WHEN g % 4 = 2 THEN NULL ELSE timestamptz '2024-03-02 08:00+00' + g * interval '5 hours' END FROM generate_series(1,800) g;
+INSERT INTO shipments SELECT g, ((g-1)%900)+1, ((g-1)%12)+1, (ARRAY['pending','shipped','delivered','late'])[(g-1)%4+1], CASE WHEN g % 13 = 0 THEN NULL ELSE 'TRACK-' || g END, timestamptz '2024-03-03 08:00+00' + g * interval '5 hours', CASE WHEN g % 4 IN (3,0) THEN timestamptz '2024-03-04 08:00+00' + g * interval '5 hours' ELSE NULL END FROM generate_series(1,730) g;
+INSERT INTO reviews SELECT g, CASE WHEN g % 19 = 0 THEN NULL ELSE ('00000000-0000-0000-0000-' || lpad(((g-1)%650+1)::text,12,'0'))::uuid END, ((g-1)%500)+1, CASE WHEN g % 23 = 0 THEN NULL ELSE ((g-1)%5)+1 END, 'Review ' || g, timestamptz '2024-04-01 08:00+00' + g * interval '7 hours' FROM generate_series(1,250) g;
+INSERT INTO order_promotions SELECT ((g-1)%900)+1, ((g-1)%25)+1 FROM generate_series(1,200) g ON CONFLICT DO NOTHING;
+-- Canonical ~8,250-row fixture.

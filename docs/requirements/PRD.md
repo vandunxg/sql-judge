@@ -76,7 +76,7 @@ Standalone desktop learning environment for developers studying PostgreSQL / T-S
 | NFR-009 | User DB never modified by read-only explorer or managed reset | External decoy DB test |
 | NFR-010 | Release builds documented and verified per selected platform; no assumed bundled PG | Matrix evidence |
 | NFR-011 | Screen fidelity is validated at each artboard viewport and supported responsive widths; no completion claim without rendered comparison evidence | Visual review artifact per route |
-| NFR-012 | CI starts automatically only for pushes to `main` and `release/**`; each release keeps one app version across `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and its lockfile entry, records it as the newest dated `CHANGELOG.md` section and is tagged `vX.Y.Z` | `scripts/test_ci_workflow.sh`, `scripts/test_release_version.sh` |
+| NFR-012 | CI starts automatically only for pushes to `main` and `release/**`; each release keeps one app version across `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and its lockfile entry, records it as the newest dated `CHANGELOG.md` section, completes the release-documentation review for affected requirements, acceptance, architecture, security and operator instructions, and is tagged `vX.Y.Z` | `scripts/test_ci_workflow.sh`, `scripts/test_release_version.sh`, `docs/operations/RELEASE-DOCUMENTATION.md` |
 
 ## 6. Explicitly excluded from initial MVP
 Full SQL syntax equivalence proof, cloud multi-user judge, tamper-proof hidden tests, arbitrary writable production databases, DB migration tool for user data, MySQL driver, DML/DDL problems, auto-generated AI hints requiring an Internet API, sync accounts, PL/pgSQL security proofs, full DB sidecar on day 1.

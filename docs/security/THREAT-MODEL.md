@@ -34,7 +34,7 @@
 
 ## Import safety minimum
 
-Limit compressed bytes, total expanded bytes, entries, file size, nested depth; reject symlinks/hardlinks (including ZIP UNIX attributes), duplicate paths and casefold collisions; normalize and resolve each target inside staging. Skip OS metadata names (`.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`, `__MACOSX/`) unread and outside the digest, after the symlink check. Reject `..`, absolute paths, NUL, unlisted files, unsupported schema versions; hash all unpacked files; atomic publish only after trusted test validation.
+Limit compressed bytes, total expanded bytes, entries, file size, nested depth; reject symlinks/hardlinks (including ZIP UNIX attributes), duplicate paths and casefold collisions; normalize and resolve each target inside staging. Skip OS metadata names (`.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`, `__MACOSX/`) unread and outside the digest, after the symlink check. Reject `..`, absolute paths, NUL, unlisted files, unsupported schema versions; hash all unpacked files; atomic publish only after trusted test validation. Setup SQL is restricted to `CREATE TABLE`, `CREATE INDEX` and `INSERT INTO` in the managed namespace; `INSERT ... SELECT` and `ON CONFLICT ... DO NOTHING` are allowed for self-contained fixtures, while standalone `DO`, privileged operations and cross-namespace access remain denied.
 
 ## Destructive action decision table
 
